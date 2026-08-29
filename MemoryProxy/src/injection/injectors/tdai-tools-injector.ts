@@ -43,6 +43,7 @@ import type {
 } from "../types.js";
 import { HOOK_PRIORITY } from "../types.js";
 import { getTdaiIdentity } from "../../tdai/identity.js";
+import { computeBridgeAuthProof } from "../../bridge/caller-auth.js";
 
 export interface TdaiMemoryToolsInjectorConfig {
   /**
@@ -57,14 +58,18 @@ export function renderTdaiMemoryToolsBlock(
   proxyBaseUrl: string,
   sessionId?: string,
   spaceId?: string,
+  bridgeAuthProof?: string,
 ): string {
   const base = proxyBaseUrl.replace(/\/$/, "");
   const bridge = `${base}/memory-bridge/v3`;
   // gateway 需要 `x-tdai-service-id: <spaceId>` 才放行；`x-conversation-id`
   // 让 proxy 复用 session 里的身份 (user_id / team_id / agent_id)。
+  // fix/bridge-caller-auth: `x-tdai-bridge-auth` = HMAC(session_id, user_key)
+  // —— proof-of-possession；user_key 本身不进 prompt。
   const sessionHeader = sessionId ? ` -H 'x-conversation-id: ${sessionId}'` : "";
   const tenantHeader = spaceId ? ` -H 'x-tdai-service-id: ${spaceId}'` : "";
-  const authHeader = `${tenantHeader}${sessionHeader}`;
+  const proofHeader = (sessionId && bridgeAuthProof) ? ` -H 'x-tdai-bridge-auth: ${bridgeAuthProof}'` : "";
+  const authHeader = `${tenantHeader}${sessionHeader}${proofHeader}`;
 
   const lines: string[] = [
     "<tdai_memory_tools>",
@@ -166,13 +171,16 @@ export class TdaiMemoryToolsInjector implements InjectionHook {
 
   prewarm(input: PrewarmInput): ContextBlock[] {
     if (input.assetCapabilities?.chat_memory === false) return [];
-    return this.renderBlocks(input.sessionInfo.session_id, input.sessionInfo.space_id);
+    const proof = input.sessionInfo.user_key && input.sessionInfo.session_id
+      ? computeBridgeAuthProof(input.sessionInfo.session_id, input.sessionInfo.user_key)
+      : undefined;
+    return this.renderBlocks(input.sessionInfo.session_id, input.sessionInfo.space_id, proof);
   }
 
-  private renderBlocks(sessionId: string, spaceId?: string): ContextBlock[] {
+  private renderBlocks(sessionId: string, spaceId?: string, proof?: string): ContextBlock[] {
     return [{
       type: "text",
-      content: renderTdaiMemoryToolsBlock(this.cfg.proxyBaseUrl, sessionId, spaceId),
+      content: renderTdaiMemoryToolsBlock(this.cfg.proxyBaseUrl, sessionId, spaceId, proof),
       metadata: {
         source: this.id,
         sessionId,
