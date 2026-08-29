@@ -37,6 +37,7 @@ import type {
   PrewarmInput,
 } from "../types.js";
 import { HOOK_PRIORITY } from "../types.js";
+import { computeBridgeAuthProof } from "../../bridge/caller-auth.js";
 
 export interface SkillToolsInjectorConfig {
   /**
@@ -61,15 +62,20 @@ export function renderSkillToolsBlock(
   allowLlmWrite = true,
   sessionId?: string,
   spaceId?: string,
+  bridgeAuthProof?: string,
 ): string {
   const base = proxyBaseUrl.replace(/\/$/, "");
   const bridge = `${base}/skill-bridge/v3/skill`;
 
   // gateway 需要 `x-tdai-service-id: <spaceId>` 才放行；`x-conversation-id`
   // 让 proxy 复用 session 里的身份 (user_id / team_id / agent_id)。
+  // fix/bridge-caller-auth: `x-tdai-bridge-auth` 是 HMAC(session_id, user_key)
+  // 的 proof-of-possession —— 证明调用方真的属于这条会话（防 UUID 重用）。
+  // user_key 本身不进 prompt（只有 HMAC 值）。
   const sessionHeader = sessionId ? ` -H 'x-conversation-id: ${sessionId}'` : "";
   const tenantHeader = spaceId ? ` -H 'x-tdai-service-id: ${spaceId}'` : "";
-  const authHeader = `${tenantHeader}${sessionHeader}`;
+  const proofHeader = (sessionId && bridgeAuthProof) ? ` -H 'x-tdai-bridge-auth: ${bridgeAuthProof}'` : "";
+  const authHeader = `${tenantHeader}${sessionHeader}${proofHeader}`;
 
   const readTools = [
     `  <tool name="skill_search">`,
@@ -210,14 +216,18 @@ export class SkillToolsInjector implements InjectionHook {
 
   async prewarm(input: PrewarmInput): Promise<ContextBlock[]> {
     if (input.assetCapabilities?.skill === false) return [];
-    return this.renderBlocks(undefined, input.sessionInfo.session_id, input.sessionInfo.space_id);
+    const proof = input.sessionInfo.user_key && input.sessionInfo.session_id
+      ? computeBridgeAuthProof(input.sessionInfo.session_id, input.sessionInfo.user_key)
+      : undefined;
+    return this.renderBlocks(undefined, input.sessionInfo.session_id, input.sessionInfo.space_id, proof);
   }
 
-  private renderBlocks(ctx?: AgentContext, prewarmSessionId?: string, prewarmSpaceId?: string): ContextBlock[] {
+  private renderBlocks(ctx?: AgentContext, prewarmSessionId?: string, prewarmSpaceId?: string, prewarmProof?: string): ContextBlock[] {
     const allowLlmWrite = this.config.allowLlmWrite ?? false;
 
     let sessionId = prewarmSessionId;
     let spaceId = prewarmSpaceId;
+    let proof = prewarmProof;
     if (ctx) {
       const custom = ctx.metadata.custom as Record<string, unknown> | undefined;
       const session = custom?.session as Record<string, unknown> | undefined;
@@ -229,9 +239,13 @@ export class SkillToolsInjector implements InjectionHook {
       if (typeof sp === "string" && sp.length > 0) {
         spaceId = sp;
       }
+      const uk = session?.user_key;
+      if (!proof && sessionId && typeof uk === "string" && uk.length > 0) {
+        proof = computeBridgeAuthProof(sessionId, uk);
+      }
     }
 
-    const content = renderSkillToolsBlock(this.config.proxyBaseUrl, allowLlmWrite, sessionId, spaceId);
+    const content = renderSkillToolsBlock(this.config.proxyBaseUrl, allowLlmWrite, sessionId, spaceId, proof);
     return [{
       type: "text",
       content,

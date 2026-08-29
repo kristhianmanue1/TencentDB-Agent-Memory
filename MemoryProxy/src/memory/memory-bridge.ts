@@ -29,6 +29,7 @@ import type { AgentContext } from "../injection/types.js";
 import { resolveFixedAssetCtxs, type FixedAssetCtx } from "../injection/injectors/tdai-fixed-asset.js";
 import type { TdaiIdentity } from "../tdai/types.js";
 import { emitBridgeToolCallTelemetry, emitBridgeRejectTelemetry, agentSourceFromSessionKey } from "./bridge-telemetry.js";
+import { BRIDGE_AUTH_HEADER, verifyBridgeAuthProof } from "../bridge/caller-auth.js";
 
 const TAG = "[memory-bridge]";
 
@@ -320,6 +321,33 @@ export function createMemoryBridgeHandler(
         executedEndpoint: sub, spaceId,
       });
       return envelope(40101, `${TAG} session not initialized; cannot derive identity`, 401);
+    }
+
+    // fix/bridge-caller-auth: proof-of-possession for the conversation-id.
+    // Present+valid → pass; present+invalid → 403 fail-closed; absent →
+    // compat allow + adoption telemetry (caller_auth_missing).
+    const authVerdict = verifyBridgeAuthProof(
+      c.req.header(BRIDGE_AUTH_HEADER),
+      { sessionId: sessionKey, userKey: ids.user_key },
+    );
+    if (authVerdict === "invalid") {
+      emitBridgeRejectTelemetry({
+        sessionKey, bridgeSource: "memory-bridge",
+        rejectReason: "caller_auth_invalid", httpStatus: 403,
+        executedEndpoint: sub,
+        spaceId: ids.space_id, userId: ids.user_id, teamId: ids.team_id,
+        agentId: ids.agent_id,
+      });
+      return envelope(40303, `${TAG} bridge caller auth invalid (${BRIDGE_AUTH_HEADER} does not match this session)`, 403);
+    }
+    if (authVerdict === "missing" || authVerdict === "unavailable") {
+      emitBridgeRejectTelemetry({
+        sessionKey, bridgeSource: "memory-bridge",
+        rejectReason: "caller_auth_missing", httpStatus: 200,
+        executedEndpoint: sub,
+        spaceId: ids.space_id, userId: ids.user_id, teamId: ids.team_id,
+        agentId: ids.agent_id,
+      });
     }
 
     let inboundBody: Record<string, unknown> = {};

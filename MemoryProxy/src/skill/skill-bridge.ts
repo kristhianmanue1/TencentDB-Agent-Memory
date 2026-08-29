@@ -34,6 +34,7 @@ import { getMetadataClient } from "../meta/client.js";
 import type { ProxyConfig } from "../types.js";
 import { emitBridgeToolCallTelemetry, emitBridgeRejectTelemetry, agentSourceFromSessionKey } from "../memory/bridge-telemetry.js";
 import { getCoreSkillClient, type CoreSkillClient } from "./core-client.js";
+import { BRIDGE_AUTH_HEADER, verifyBridgeAuthProof } from "../bridge/caller-auth.js";
 
 /**
  * 二选一的 pin repo（KvVersionPinRepo 或 VersionPinRepo）——
@@ -531,6 +532,34 @@ export function createSkillBridgeHandler(
 
     // 消融实验：allowLlmWrite=false 时拒绝写操作
     const allowLlmWrite = config.skillRuntime?.allowLlmWrite ?? false;
+
+    // fix/bridge-caller-auth: proof-of-possession for the conversation-id.
+    // Present+valid → pass; present+invalid → 403 fail-closed; absent →
+    // compat allow + adoption telemetry (caller_auth_missing).
+    const authVerdict = verifyBridgeAuthProof(
+      c.req.header(BRIDGE_AUTH_HEADER),
+      { sessionId: sessionKey, userKey: ids.user_key },
+    );
+    if (authVerdict === "invalid") {
+      emitBridgeRejectTelemetry({
+        sessionKey, bridgeSource: "skill-bridge",
+        rejectReason: "caller_auth_invalid", httpStatus: 403,
+        executedEndpoint: sub,
+        spaceId: ids.space_id, userId: ids.user_id, teamId: ids.team_id,
+        agentId: ids.agent_id, agentSource: ids.agent_source,
+      });
+      return envelope(40303, `${TAG} bridge caller auth invalid (${BRIDGE_AUTH_HEADER} does not match this session)`, 403);
+    }
+    if (authVerdict === "missing" || authVerdict === "unavailable") {
+      emitBridgeRejectTelemetry({
+        sessionKey, bridgeSource: "skill-bridge",
+        rejectReason: "caller_auth_missing", httpStatus: 200,
+        executedEndpoint: sub,
+        spaceId: ids.space_id, userId: ids.user_id, teamId: ids.team_id,
+        agentId: ids.agent_id, agentSource: ids.agent_source,
+      });
+    }
+
     if (!allowLlmWrite && WRITE_SUBPATHS.has(sub)) {
       emitBridgeRejectTelemetry({
         sessionKey, bridgeSource: "skill-bridge",
