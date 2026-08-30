@@ -178,7 +178,7 @@ check_llm_openai() {
     if grep -q "\"$model\"" "$body_file" 2>/dev/null; then
       ok "$label OpenAI 协议通路 OK（$model 在 /models 列表内）"
     else
-      ok "$label OpenAI 协议通路 OK（未在 /models 里显式列出 $model，业务侧仍可能可用）"
+      ok "$label OpenAI 协议通路 OK（未在 /models 里显式列出 ${model}，业务侧仍可能可用）"
     fi
   elif [[ "$code" == "401" || "$code" == "403" ]]; then
     warn "$label API key 无效（HTTP ${code}）：$url"
@@ -276,6 +276,21 @@ prompt_with_default() {
   fi
 }
 
+# prompt_secret_with_default <label> <default>
+#   不把现有 secret 回显到终端；回车保留，输入新值时关闭 echo。
+prompt_secret_with_default() {
+  local label="$1" default="${2:-}" input marker="未配置"
+  [[ -n "$default" && "$default" != "REPLACE_ME" ]] && marker="已配置"
+  printf '%s [%s]（回车 = 保留）: ' "$label" "$marker" >&2
+  IFS= read -r -s input || { printf '\n' >&2; printf '%s' "$default"; return 0; }
+  printf '\n' >&2
+  if [[ -z "$input" ]]; then
+    printf '%s' "$default"
+  else
+    printf '%s' "$input"
+  fi
+}
+
 # prompt_protocol <default>
 #   让用户确认 LLM 协议（openai/anthropic），非法输入回退 openai。
 prompt_protocol() {
@@ -307,19 +322,61 @@ prompt_confirm() {
   esac
 }
 
+# prepare_secret_file <directory> <file>
+#   Prepara un archivo generado que puede contener credenciales. El directorio
+#   queda 0700 y el archivo 0600 desde su creación; se rechazan symlinks.
+prepare_secret_file() {
+  local dir="$1" file="$2" old_umask
+  if [[ -L "$dir" || -L "$file" ]]; then
+    warn "拒绝通过符号链接生成敏感配置: $file"
+    return 1
+  fi
+  old_umask="$(umask)"
+  umask 077
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  : > "$file"
+  chmod 600 "$file"
+  umask "$old_umask"
+}
+
 # set_env_value <key> <value> <file>
 #   就地更新/追加 .env 里的 KEY=VALUE。用 awk 原样输出，避免 sed/perl 转义坑。
 set_env_value() {
   local key="$1" value="$2" file="$3"
-  if grep -qE "^[[:space:]]*${key}=" "$file"; then
-    local tmp="$file.tmp.$$"
-    awk -v k="$key" -v v="$value" '
+  local old_umask dir base tmp
+  if [[ -L "$file" ]]; then
+    warn "拒绝写入符号链接形式的 env 文件: $file"
+    return 1
+  fi
+  dir="$(dirname "$file")"
+  base="$(basename "$file")"
+  old_umask="$(umask)"
+  umask 077
+  if [[ -f "$file" ]] && grep -qE "^[[:space:]]*${key}=" "$file"; then
+    tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || {
+      umask "$old_umask"
+      return 1
+    }
+    if ! awk -v k="$key" -v v="$value" '
       $0 ~ ("^[[:space:]]*" k "=") { print k "=" v; next }
       { print }
-    ' "$file" > "$tmp" && mv "$tmp" "$file"
+    ' "$file" > "$tmp"; then
+      rm -f "$tmp"
+      umask "$old_umask"
+      return 1
+    fi
+    chmod 600 "$tmp"
+    mv "$tmp" "$file"
   else
+    if [[ ! -e "$file" ]]; then
+      : > "$file"
+    fi
+    chmod 600 "$file"
     printf '%s=%s\n' "$key" "$value" >> "$file"
   fi
+  chmod 600 "$file"
+  umask "$old_umask"
 }
 
 # interactive_llm_setup
@@ -334,7 +391,7 @@ interactive_llm_setup() {
   # ── memory 组 ──
   while true; do
     base=$(prompt_with_default "memory 组 LLM BASE_URL" "${MEMORY_LLM_BASE_URL:-}")
-    key=$(prompt_with_default "memory 组 LLM API_KEY" "${MEMORY_LLM_API_KEY:-}")
+    key=$(prompt_secret_with_default "memory 组 LLM API_KEY" "${MEMORY_LLM_API_KEY:-}")
     model=$(prompt_with_default "memory 组 LLM MODEL" "${MEMORY_LLM_MODEL:-}")
     proto=$(prompt_protocol "${MEMORY_LLM_PROTOCOL:-openai}")
 
@@ -372,7 +429,7 @@ interactive_llm_setup() {
   else
     while true; do
       base=$(prompt_with_default "proxy 组 UPSTREAM_URL" "${PROXY_UPSTREAM_URL:-}")
-      key=$(prompt_with_default "proxy 组 UPSTREAM_API_KEY" "${PROXY_UPSTREAM_API_KEY:-}")
+      key=$(prompt_secret_with_default "proxy 组 UPSTREAM_API_KEY" "${PROXY_UPSTREAM_API_KEY:-}")
       model=$(prompt_with_default "proxy 组 UPSTREAM_MODEL" "${PROXY_UPSTREAM_MODEL:-}")
 
       if check_llm_group "proxy 组" "$base" "$key" "$model" openai; then
@@ -395,6 +452,7 @@ interactive_llm_setup() {
   set_env_value PROXY_UPSTREAM_URL "$PROXY_UPSTREAM_URL" "$ENV_FILE"
   set_env_value PROXY_UPSTREAM_API_KEY "$PROXY_UPSTREAM_API_KEY" "$ENV_FILE"
   set_env_value PROXY_UPSTREAM_MODEL "$PROXY_UPSTREAM_MODEL" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
   ok "LLM 配置已保存到 $ENV_FILE"
 }
 

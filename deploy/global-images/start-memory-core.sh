@@ -19,9 +19,8 @@ require_vars MEMORY_CORE_IMAGE MEMORY_CORE_PORT MEMORY_CORE_VOLUME
 # ── Gateway 内部管理凭据 ─────────────────────────────────────────
 # 用 ${VAR-default}（不是 :-default）：允许 .env 里显式设为空字符串来关闭 Bearer gate。
 #
-# 当前 memory-core 的 Bearer gate 与 proxy auth 存在**已知不兼容**：proxy 调
-# /v3/meta/auth/verify 时不带 Bearer（源码遗漏，见 MemoryProxy/src/auth.ts），
-# 所以 proxy 启用 auth 时必须把 MEMORY_CORE_GATEWAY_API_KEY 留空。默认已置空。
+# MEMORY_CORE_GATEWAY_API_KEY 非空时，proxy 向 /v3/meta/auth/verify 发送
+# Bearer mediante auth.serviceToken（fix Bearer ya consolidado en operativa）。
 MEMORY_CORE_GATEWAY_API_KEY="${MEMORY_CORE_GATEWAY_API_KEY-}"
 MEMORY_CORE_ADMIN_USERNAME="${MEMORY_CORE_ADMIN_USERNAME:-admin}"
 
@@ -29,8 +28,7 @@ MEMORY_CORE_ADMIN_USERNAME="${MEMORY_CORE_ADMIN_USERNAME:-admin}"
 ADMIN_KEY_FILE="${MEMORY_CORE_ADMIN_KEY_FILE:-$SCRIPT_DIR/.admin-key}"
 
 if [[ -n "$MEMORY_CORE_GATEWAY_API_KEY" ]]; then
-  warn "MEMORY_CORE_GATEWAY_API_KEY 非空 —— proxy 的 sessionInit/auth 目前会因缺 Bearer 而失败。"
-  warn "本地体验请把 .env 里的 MEMORY_CORE_GATEWAY_API_KEY 留空。"
+  info "MEMORY_CORE_GATEWAY_API_KEY 已启用；proxy debe usar el mismo valor en auth.serviceToken."
 fi
 
 CONTAINER=tdai-memory-core
@@ -71,7 +69,7 @@ fi
 
 if [[ "$MEMORY_CORE_STORE_MODE" == "mongodb" || "$MEMORY_CORE_METADATA_BACKEND" == "mongodb" ]]; then
   if [[ -z "${MONGODB_ENDPOINT:-}" ]]; then
-    info "未设 MONGODB_ENDPOINT → 启动本地 atlas-local（$MONGO_LOCAL_IMAGE）"
+    info "未设 MONGODB_ENDPOINT → 启动本地 atlas-local(${MONGO_LOCAL_IMAGE})"
     if ! $DOCKER ps --format '{{.Names}}' 2>/dev/null | grep -qx "$MONGO_LOCAL_CONTAINER"; then
       rm_container_if_exists "$MONGO_LOCAL_CONTAINER"
       # --hostname 必须固定：atlas-local 用容器主机名初始化单节点 RS 成员。
@@ -98,14 +96,14 @@ if [[ "$MEMORY_CORE_STORE_MODE" == "mongodb" || "$MEMORY_CORE_METADATA_BACKEND" 
       sleep 2
     done
     [[ "$mongo_ready" == "1" ]] || die "mongo 容器 60s 内未就绪，docker logs $MONGO_LOCAL_CONTAINER 排查"
-    ok "mongo 就绪（容器 $MONGO_LOCAL_CONTAINER，网络内别名 mongo-search）"
+    ok "mongo 就绪（容器 ${MONGO_LOCAL_CONTAINER}，网络内别名 mongo-search）"
     MONGODB_ENDPOINT="mongodb://mongo-search:27017/?directConnection=true"
   fi
 fi
 
 if [[ "$MEMORY_CORE_STORE_MODE" == "mongodb" ]]; then
   MONGO_ENV_ARGS+=( -e "MONGODB_ENDPOINT=$MONGODB_ENDPOINT" -e "MONGODB_DATABASE=$MONGODB_DATABASE" )
-  info "memory-core 数据面后端 = mongodb（endpoint=$MONGODB_ENDPOINT, db=$MONGODB_DATABASE）"
+  info "memory-core 数据面后端 = mongodb（endpoint=$MONGODB_ENDPOINT, db=${MONGODB_DATABASE})"
 fi
 
 if [[ "$MEMORY_CORE_METADATA_BACKEND" == "mongodb" ]]; then
@@ -125,8 +123,8 @@ rm_container_if_exists "$CONTAINER"
 # 默认镜像里没 config，memory-core 走编译时的默认（skill / knowledge 模块关闭）。
 # 从 .env 里的 MEMORY_LLM_* 生成一份 standalone+skill 的最小配置。
 CORE_CONFIG_DIR="${MEMORY_CORE_CONFIG_DIR:-$SCRIPT_DIR/.memory-core-config}"
-mkdir -p "$CORE_CONFIG_DIR"
 CORE_CONFIG_FILE="$CORE_CONFIG_DIR/tdai-gateway.yaml"
+prepare_secret_file "$CORE_CONFIG_DIR" "$CORE_CONFIG_FILE"
 info "生成 gateway config → $CORE_CONFIG_FILE"
 cat > "$CORE_CONFIG_FILE" <<YAML
 # 由 start-memory-core.sh 自动生成 —— 每次启动覆盖，请不要手动改。

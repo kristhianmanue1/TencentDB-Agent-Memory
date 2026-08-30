@@ -21,8 +21,9 @@ require_vars \
   PROXY_IMAGE PROXY_PORT \
   PROXY_UPSTREAM_URL PROXY_UPSTREAM_API_KEY PROXY_UPSTREAM_MODEL
 
-# 与 memory-core 保持一致的 gateway 内部凭据（默认 local，仅本地体验）
-MEMORY_CORE_GATEWAY_API_KEY="${MEMORY_CORE_GATEWAY_API_KEY:-local}"
+# 与 memory-core 保持一致的 gateway 内部凭据。显式空值必须保持为空：
+# Core 未启用 Bearer gate 时，proxy 也不得凭空制造一个 token。
+MEMORY_CORE_GATEWAY_API_KEY="${MEMORY_CORE_GATEWAY_API_KEY-}"
 
 CONTAINER=tdai-proxy
 NETWORK=tdai-memory-stack
@@ -47,8 +48,8 @@ rm_container_if_exists "$CONTAINER"
 # 所以我们从 .env 生成一个最小 config.yaml 挂到容器 /data/config.yaml。
 # 容器 CMD 已经是 [--config /data/config.yaml]。
 CONFIG_DIR="${PROXY_CONFIG_DIR:-$SCRIPT_DIR/.proxy-config}"
-mkdir -p "$CONFIG_DIR"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
+prepare_secret_file "$CONFIG_DIR" "$CONFIG_FILE"
 
 # ── 三大能力开关（默认最小可用；打开时自动串联依赖）──
 # PROXY_ENABLE_AUTH        : 客户端凭 x-tdai-user-key 走内核 auth/verify → user_id
