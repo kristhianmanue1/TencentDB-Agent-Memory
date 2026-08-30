@@ -19,9 +19,8 @@ require_vars MEMORY_CORE_IMAGE MEMORY_CORE_PORT MEMORY_CORE_VOLUME
 # ── Gateway 内部管理凭据 ─────────────────────────────────────────
 # 用 ${VAR-default}（不是 :-default）：允许 .env 里显式设为空字符串来关闭 Bearer gate。
 #
-# 当前 memory-core 的 Bearer gate 与 proxy auth 存在**已知不兼容**：proxy 调
-# /v3/meta/auth/verify 时不带 Bearer（源码遗漏，见 MemoryProxy/src/auth.ts），
-# 所以 proxy 启用 auth 时必须把 MEMORY_CORE_GATEWAY_API_KEY 留空。默认已置空。
+# MEMORY_CORE_GATEWAY_API_KEY 非空时，proxy 必须通过 auth.gatewayApiKey
+# 向 /v3/meta/auth/verify 发送 Bearer（fix 4017f2c / PR #1211）。
 MEMORY_CORE_GATEWAY_API_KEY="${MEMORY_CORE_GATEWAY_API_KEY-}"
 MEMORY_CORE_ADMIN_USERNAME="${MEMORY_CORE_ADMIN_USERNAME:-admin}"
 
@@ -29,8 +28,7 @@ MEMORY_CORE_ADMIN_USERNAME="${MEMORY_CORE_ADMIN_USERNAME:-admin}"
 ADMIN_KEY_FILE="${MEMORY_CORE_ADMIN_KEY_FILE:-$SCRIPT_DIR/.admin-key}"
 
 if [[ -n "$MEMORY_CORE_GATEWAY_API_KEY" ]]; then
-  warn "MEMORY_CORE_GATEWAY_API_KEY 非空 —— proxy 的 sessionInit/auth 目前会因缺 Bearer 而失败。"
-  warn "本地体验请把 .env 里的 MEMORY_CORE_GATEWAY_API_KEY 留空。"
+  info "MEMORY_CORE_GATEWAY_API_KEY 已启用；proxy 必须配置 auth.gatewayApiKey。"
 fi
 
 CONTAINER=tdai-memory-core
@@ -49,8 +47,8 @@ rm_container_if_exists "$CONTAINER"
 # 默认镜像里没 config，memory-core 走编译时的默认（skill / knowledge 模块关闭）。
 # 从 .env 里的 MEMORY_LLM_* 生成一份 standalone+skill 的最小配置。
 CORE_CONFIG_DIR="${MEMORY_CORE_CONFIG_DIR:-$SCRIPT_DIR/.memory-core-config}"
-mkdir -p "$CORE_CONFIG_DIR"
 CORE_CONFIG_FILE="$CORE_CONFIG_DIR/tdai-gateway.yaml"
+prepare_secret_file "$CORE_CONFIG_DIR" "$CORE_CONFIG_FILE"
 info "生成 gateway config → $CORE_CONFIG_FILE"
 cat > "$CORE_CONFIG_FILE" <<YAML
 # 由 start-memory-core.sh 自动生成 —— 每次启动覆盖，请不要手动改。
@@ -172,7 +170,7 @@ verify_user_key() {
   [[ "$code" == "200" ]]
 }
 
-info "初始化 admin user（username=${MEMORY_CORE_ADMIN_USERNAME}, key 持久化 → $ADMIN_KEY_FILE）..."
+info "初始化 admin user（username=${MEMORY_CORE_ADMIN_USERNAME}, key 持久化 → ${ADMIN_KEY_FILE}）..."
 
 # 生成随机 key（首次 init-admin 用；若之前有 file 就复用）
 if [[ -s "$ADMIN_KEY_FILE" ]]; then

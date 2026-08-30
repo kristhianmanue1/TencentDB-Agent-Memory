@@ -65,6 +65,8 @@ __tests__/offload_server/remote-config.json
 
 # start-all.sh 运行时生成，含 admin user_key 与上游 LLM API key
 deploy/global-images/.admin-key
+deploy/global-images/.basanos-key
+deploy/global-images/.gateway-key
 deploy/global-images/.proxy-config/
 deploy/global-images/.memory-core-config/
 
