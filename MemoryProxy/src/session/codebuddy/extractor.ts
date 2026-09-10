@@ -16,6 +16,7 @@
 
 import type { SessionInitData, TeamOption } from "../types.js";
 import { SKIP_LABEL, PATH_SEP, ASSET_CONFIRM_YES, ASSET_CONFIRM_NO } from "./form.js";
+import { EN_ASSET_CONFIRM_YES, EN_ASSET_CONFIRM_NO } from "../form-en.js";
 
 // ── Markers ────────────────────────────────────────────────────────────────────
 
@@ -64,10 +65,22 @@ export function extractAssetConfirm(content: string): boolean | null {
   const xml = parseQuestionAnswerXml(content);
   const answer = xml?.teamAnswer ?? xml?.agentAnswer ?? xml?.taskAnswer ?? content;
 
-  if (answer.includes(ASSET_CONFIRM_YES) || /是.*关联|关联.*是|确认.*关联/i.test(answer)) {
+  // Bilingual matching (fork i18n option A): zh labels for CB/WB/codex/dsh,
+  // EN labels for the opencode/claude-code adapters rendered by form-en.ts.
+  if (
+    answer.includes(ASSET_CONFIRM_YES) ||
+    answer.includes(EN_ASSET_CONFIRM_YES) ||
+    /是.*关联|关联.*是|确认.*关联/i.test(answer) ||
+    /yes,?\s*link/i.test(answer)
+  ) {
     return true;
   }
-  if (answer.includes(ASSET_CONFIRM_NO) || /否.*不关联|不关联.*否|本次不关联/i.test(answer)) {
+  if (
+    answer.includes(ASSET_CONFIRM_NO) ||
+    answer.includes(EN_ASSET_CONFIRM_NO) ||
+    /否.*不关联|不关联.*否|本次不关联/i.test(answer) ||
+    /no,?\s*skip/i.test(answer)
+  ) {
     return false;
   }
   return null;

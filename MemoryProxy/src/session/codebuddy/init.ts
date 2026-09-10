@@ -50,7 +50,8 @@ import {
 // import computePagination + MORE_LABEL="更多 →"）。WorkBuddy 走 CB 状态机时的
 // MORE 翻页拦截需要用同一套 MORE_LABEL 判定 + computePagination 判越界，才能与
 // form 侧切片对齐。CC 的 MORE_LABEL 值与 workbuddy/form.ts 完全一致。
-import { MORE_LABEL as WB_MORE_LABEL } from "../claude-code/form.js";
+import { MORE_LABEL as OC_CC_MORE_LABEL_EN } from "../claude-code/form.js";
+import { MORE_LABEL as WB_MORE_LABEL_ZH } from "../workbuddy/form.js";
 import { computePagination as computeCCPagination } from "../claude-code/pagination.js";
 import type { ClientCapabilities } from "../client-capabilities.js";
 
@@ -247,7 +248,12 @@ function detectWorkbuddyMorePage(
   currentPage: number,
   total: number,
 ): number | null {
-  if (!answerText.includes(WB_MORE_LABEL)) return null;
+  // Dual-label matching (fork i18n option A): workbuddy renders zh "更多 →",
+  // opencode/claude-code render EN "More →" (via form-en.ts constants).
+  // Match both so the shared pagination interception works for every agentSource.
+  if (!answerText.includes(WB_MORE_LABEL_ZH) && !answerText.includes(OC_CC_MORE_LABEL_EN)) {
+    return null;
+  }
   const nextPage = currentPage + 1;
   // 用与 form 侧同款分页算法判越界，防止翻过末页后停在越界页导致 form 抛
   // solo-page 断言；对齐 claude-code/init.ts 的 safeNextPage 回绕逻辑。

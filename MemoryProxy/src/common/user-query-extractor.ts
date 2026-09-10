@@ -35,8 +35,10 @@
 /**
  * 会话初始化（选择 Team / Agent / 任务）表单问答的标题标记。
  * 用于剥离残留的标题行；真实用户输入不受影响。
+ * Fork i18n (option A): EN marker for opencode/claude-code renders
+ * ("Session Init — ..."), zh marker for CB/WB/codex/dsh.
  */
-const SESSION_INIT_TITLE_MARKER = "会话初始化";
+const SESSION_INIT_TITLE_MARKERS = ["会话初始化", "Session Init"];
 
 /**
  * Claude Code CLI 用 role=user 塞进对话流的"内部辅助 prompt"识别器。
@@ -179,10 +181,10 @@ export function extractUserQueryText(raw: string): string {
     "\n",
   );
 
-  // 2e) 残留的会话初始化表单标题行（如「会话初始化 — 选择 Agent 与任务」）
+  // 2e) 残留的会话初始化表单标题行（zh「会话初始化 — …」/ EN "Session Init — …"）
   text = text
     .split("\n")
-    .filter((line) => !line.includes(SESSION_INIT_TITLE_MARKER))
+    .filter((line) => !SESSION_INIT_TITLE_MARKERS.some((m) => line.includes(m)))
     .join("\n");
 
   // 2f) 折叠多余空行（前面剥除后可能留下大段空行）

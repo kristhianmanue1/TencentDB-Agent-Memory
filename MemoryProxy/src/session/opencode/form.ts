@@ -57,6 +57,11 @@
 
 import type { TeamOption } from "../types.js";
 import { computePagination, CC_MAX_OPTIONS as CC_MAX_OPTIONS_SHARED } from "../claude-code/pagination.js";
+import {
+  EN_SKIP_LABEL, EN_MORE_LABEL, EN_ASSET_CONFIRM_YES, EN_ASSET_CONFIRM_NO,
+  EN_ASSET_CONFIRM_FORM_TITLE, EN_TEAM_FORM_TITLE, EN_AGENT_TASK_FORM_TITLE,
+  EN_RETRY_FORM_TITLE, EN_SKIP_HINT,
+} from "../form-en.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -64,23 +69,23 @@ import { computePagination, CC_MAX_OPTIONS as CC_MAX_OPTIONS_SHARED } from "../c
 export const TOOL_NAME = "question";
 export const TOOLCALL_PREFIX = "call_oc_session_init_";
 
-export const TEAM_FORM_TITLE = "会话初始化 — 选择 Team";
-export const AGENT_TASK_FORM_TITLE = "会话初始化 — 选择 Agent 与任务";
-export const RETRY_FORM_TITLE = "未能识别选择，请重新选择";
+export const TEAM_FORM_TITLE = EN_TEAM_FORM_TITLE;
+export const AGENT_TASK_FORM_TITLE = EN_AGENT_TASK_FORM_TITLE;
+export const RETRY_FORM_TITLE = EN_RETRY_FORM_TITLE;
 
-export const SKIP_LABEL = "本次不关联（跳过注入，直接放行）";
-export const MORE_LABEL = "更多 →";
+export const SKIP_LABEL = EN_SKIP_LABEL;
+export const MORE_LABEL = EN_MORE_LABEL;
 
-export const ASSET_CONFIRM_YES = "是，关联团队资产";
-export const ASSET_CONFIRM_NO = "否，本次不关联";
-export const ASSET_CONFIRM_FORM_TITLE = "会话初始化 — 是否关联团队资产";
+export const ASSET_CONFIRM_YES = EN_ASSET_CONFIRM_YES;
+export const ASSET_CONFIRM_NO = EN_ASSET_CONFIRM_NO;
+export const ASSET_CONFIRM_FORM_TITLE = EN_ASSET_CONFIRM_FORM_TITLE;
 
 /**
  * 附在每步 question 文末的通用备注。opencode `question` 工具的 UI 也支持用户自由输入答复
- * （非选项文字），回复"跳过 / skip / 不关联"会走 SKIP_RE bypass。
- * 文案与 claude-code / workbuddy / codex / codebuddy / dsh 六端统一。
+ * （非选项文字），回复"skip"会走 SKIP_RE bypass。
+ * Fork i18n (option A): EN for opencode + claude-code only; CB/WB/codex/dsh keep zh.
  */
-const SKIP_HINT = '（请选择最匹配的选项，当前暂不支持自定义输入。若选择跳过，本次 Session 将不注入团队资产）';
+const SKIP_HINT = EN_SKIP_HINT;
 
 /** opencode question header 硬上限。schema 校验 ≤30 字符，超长会被客户端拒收。 */
 const OC_HEADER_MAX = 30;
@@ -146,11 +151,11 @@ function buildQuestionArgs(data: FormData): { questions: OCAskQuestion[] } {
 
   if (stage === "asset_confirm") {
     questions.push({
-      question: titlePrefix + "本次对话是否要关联团队资产？" + SKIP_HINT,
-      header: clipHeader("关联资产"),
+      question: titlePrefix + "Link team assets for this conversation?" + SKIP_HINT,
+      header: clipHeader("Link assets"),
       options: [
-        { label: ASSET_CONFIRM_YES, description: "选择 Team / Agent / Task，注入团队上下文" },
-        { label: ASSET_CONFIRM_NO, description: "本次不注入任何内容，直接放行" },
+        { label: ASSET_CONFIRM_YES, description: "Select Team / Agent / Task to inject team context" },
+        { label: ASSET_CONFIRM_NO, description: "Inject nothing this session, proceed as-is" },
       ],
       multiple: false,
     });
@@ -170,7 +175,7 @@ function buildQuestionArgs(data: FormData): { questions: OCAskQuestion[] } {
 
     if (!page.isLastPage) {
       const remaining = page.total - page.end;
-      teamOpts.push({ label: MORE_LABEL, description: `查看下一批（还剩 ${remaining} 个 Team）` });
+      teamOpts.push({ label: MORE_LABEL, description: `Show next batch (${remaining} teams left)` });
     }
 
     if (teamOpts.length < 2) {
@@ -181,9 +186,9 @@ function buildQuestionArgs(data: FormData): { questions: OCAskQuestion[] } {
       );
     }
 
-    const pageSuffix = page.totalPages > 1 ? `（第 ${pageIndex + 1}/${page.totalPages} 页）` : "";
+    const pageSuffix = page.totalPages > 1 ? ` (page ${pageIndex + 1}/${page.totalPages})` : "";
     questions.push({
-      question: titlePrefix + `请选择本次会话所属的 Team${pageSuffix}：` + SKIP_HINT,
+      question: titlePrefix + `Select the Team for this session${pageSuffix}:` + SKIP_HINT,
       header: clipHeader(page.totalPages > 1 ? `Team ${pageIndex + 1}/${page.totalPages}` : "Team"),
       options: teamOpts.slice(0, CC_MAX_OPTIONS),
       multiple: false,
@@ -206,7 +211,7 @@ function buildQuestionArgs(data: FormData): { questions: OCAskQuestion[] } {
 
     if (!page.isLastPage) {
       const remaining = page.total - page.end;
-      combinedOptions.push({ label: MORE_LABEL, description: `查看下一批（还剩 ${remaining} 个 Agent）` });
+      combinedOptions.push({ label: MORE_LABEL, description: `Show next batch (${remaining} agents left)` });
     }
 
     if (combinedOptions.length < 2) {
@@ -216,9 +221,9 @@ function buildQuestionArgs(data: FormData): { questions: OCAskQuestion[] } {
       );
     }
 
-    const pageSuffix = page.totalPages > 1 ? `（第 ${pageIndex + 1}/${page.totalPages} 页）` : "";
+    const pageSuffix = page.totalPages > 1 ? ` (page ${pageIndex + 1}/${page.totalPages})` : "";
     questions.push({
-      question: titlePrefix + `请选择「${team.team_name}」下要使用的 Agent${pageSuffix}：` + SKIP_HINT,
+      question: titlePrefix + `Select the Agent to use under "${team.team_name}"${pageSuffix}:` + SKIP_HINT,
       header: clipHeader(page.totalPages > 1 ? `Agent ${pageIndex + 1}/${page.totalPages}` : "Agent"),
       options: combinedOptions.slice(0, CC_MAX_OPTIONS),
       multiple: false,
@@ -242,7 +247,7 @@ function buildQuestionArgs(data: FormData): { questions: OCAskQuestion[] } {
       const remaining = page.total - page.end;
       taskOpts.push({
         label: MORE_LABEL,
-        description: `查看下一批（还剩 ${remaining} 个任务）`,
+        description: `Show next batch (${remaining} tasks left)`,
       });
     }
 
@@ -253,9 +258,9 @@ function buildQuestionArgs(data: FormData): { questions: OCAskQuestion[] } {
       );
     }
 
-    const taskPageSuffix = page.totalPages > 1 ? `（第 ${taskPageIndex + 1}/${page.totalPages} 页）` : "";
+    const taskPageSuffix = page.totalPages > 1 ? ` (page ${taskPageIndex + 1}/${page.totalPages})` : "";
     questions.push({
-      question: titlePrefix + `请选择「${team.team_name}」下要关联的任务${taskPageSuffix}：` + SKIP_HINT,
+      question: titlePrefix + `Select the Task to link under "${team.team_name}"${taskPageSuffix}:` + SKIP_HINT,
       header: clipHeader(page.totalPages > 1 ? `Task ${taskPageIndex + 1}/${page.totalPages}` : "Task"),
       options: taskOpts.slice(0, CC_MAX_OPTIONS),
       multiple: false,
