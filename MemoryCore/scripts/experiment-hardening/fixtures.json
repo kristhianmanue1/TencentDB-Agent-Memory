@@ -1,0 +1,121 @@
+[
+  {
+    "id": "W1",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "Maya, a partir de hoy quiero que todos tus reportes de deploy vengan en el mismo formato: título con el nombre del servicio, luego lista de cambios, luego estado de los checks, y al final un link al PR. Nada de párrafos largos.", "timestamp": "2026-09-09T09:12:00Z"},
+      {"id": "m2", "role": "assistant", "content": "Entendido, Kris. Adopto ese formato para todos los reportes de deploy de aquí en adelante: servicio → cambios → checks → link al PR. Lo aplico desde el próximo deploy.", "timestamp": "2026-09-09T09:12:18Z"},
+      {"id": "m3", "role": "user", "content": "Perfecto. Y si un check falla, márcalo en negrita con el nombre exacto del job, no con un 'falló algo'.", "timestamp": "2026-09-09T09:13:02Z"},
+      {"id": "m4", "role": "assistant", "content": "Anotado: checks fallidos en negrita con el nombre exacto del job. Guardo ambas reglas como formato estándar de mis reportes.", "timestamp": "2026-09-09T09:13:15Z"},
+      {"id": "m5", "role": "user", "content": "Eso es todo, gracias. El deploy de billing-api sale a las 11, prepárame el reporte con ese formato.", "timestamp": "2026-09-09T09:13:40Z"},
+      {"id": "m6", "role": "assistant", "content": "Listo, preparo el reporte de billing-api con el formato acordado cuando termine el deploy de las 11.", "timestamp": "2026-09-09T09:13:52Z"}
+    ]
+  },
+  {
+    "id": "W2",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "Ojo, por si te sirve de contexto: el runbook de on-call dice \"always rollback before re-deploying a failed release\". Lo acabo de releer porque el deploy de pagos falló esta mañana.", "timestamp": "2026-09-09T11:02:00Z"},
+      {"id": "m2", "role": "assistant", "content": "Gracias Alice, lo tengo como dato: según el runbook de on-call, ante un release fallido se hace rollback antes de re-desplegar. ¿Quieres que revise el estado del rollback de pagos?", "timestamp": "2026-09-09T11:02:22Z"},
+      {"id": "m3", "role": "user", "content": "Sí, mira si el rollback de la 2.14.3 terminó bien. Y ese punto del runbook está en la sección 4.2, por si lo necesitas citar.", "timestamp": "2026-09-09T11:03:05Z"},
+      {"id": "m4", "role": "assistant", "content": "El rollback de la 2.14.3 completó a las 10:47 UTC sin errores. Registrado también: runbook de on-call, sección 4.2, regla de rollback antes de re-deploy.", "timestamp": "2026-09-09T11:03:30Z"},
+      {"id": "m5", "role": "user", "content": "Genial. El re-deploy con el fix lo lanza Diego a las 13:00 entonces.", "timestamp": "2026-09-09T11:04:10Z"},
+      {"id": "m6", "role": "assistant", "content": "Perfecto, queda entonces: re-deploy de pagos 2.14.4 por Diego a las 13:00 UTC, siguiendo el runbook 4.2.", "timestamp": "2026-09-09T11:04:25Z"}
+    ]
+  },
+  {
+    "id": "W3",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "Hablé con Mariana y me dijo que el agente debe pedir confirmación explícita antes de cualquier operación que toque producción. O sea, tú: nada de tocar prod sin que uno de nosotros diga 'confirmado'.", "timestamp": "2026-09-09T14:20:00Z"},
+      {"id": "m2", "role": "assistant", "content": "Recibido el relato: según tu manager Mariana, debo pedir confirmación explícita antes de operaciones sobre producción. Lo tomo en cuenta, aunque entiendo que la autorización formal de esa regla vendría del proceso interno.", "timestamp": "2026-09-09T14:20:25Z"},
+      {"id": "m3", "role": "user", "content": "Sí, ella es quien manda en el equipo de plataforma. También dijo que el agente debe resumir cada incidente en máximo 5 líneas.", "timestamp": "2026-09-09T14:21:00Z"},
+      {"id": "m4", "role": "assistant", "content": "Entendido: me consta que Mariana pide también resúmenes de incidente de máximo 5 líneas. ¿Lo aplico desde el próximo incidente?", "timestamp": "2026-09-09T14:21:18Z"},
+      {"id": "m5", "role": "user", "content": "Sip. Por cierto, el incidente de ayer del auth-service ya está cerrado, fue un rate limit misconfigured.", "timestamp": "2026-09-09T14:22:02Z"},
+      {"id": "m6", "role": "assistant", "content": "Bueno saberlo: incidente del auth-service cerrado, causa un rate limit mal configurado. Cuando me toque resumir incidentes, uso el formato de 5 líneas que relataste de Mariana.", "timestamp": "2026-09-09T14:22:20Z"}
+    ]
+  },
+  {
+    "id": "W4",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "Equipo, propongo algo para los PRs: review obligatorio de dos personas si el diff toca migraciones de DB. ¿Les late?", "timestamp": "2026-09-09T10:30:00Z"},
+      {"id": "m2", "role": "assistant", "content": "Suena razonable: dos reviewers cuando el diff incluye migraciones. ¿Lo quieren como política de repo (CODEOWNERS o branch protection) o solo como acuerdo de equipo?", "timestamp": "2026-09-09T10:30:20Z"},
+      {"id": "m3", "role": "user", "content": "Yo lo haría con branch protection, es más difícil de olvidar.", "timestamp": "2026-09-09T10:31:00Z"},
+      {"id": "m4", "role": "user", "content": "Ok, hablé con Maya y con Kris y quedó decidido: dos aprobaciones obligatorias en PRs con migraciones, implementado vía branch protection en GitHub. Alice lo configura esta semana.", "timestamp": "2026-09-09T16:45:00Z"},
+      {"id": "m5", "role": "assistant", "content": "Confirmado entonces como decisión adoptada: dos aprobaciones obligatorias para PRs con migraciones de DB, vía branch protection, configuración a cargo de Alice esta semana.", "timestamp": "2026-09-09T16:45:18Z"},
+      {"id": "m6", "role": "user", "content": "Eso. Avisen cuando esté activo para actualizar el wiki del equipo.", "timestamp": "2026-09-09T16:46:02Z"}
+    ]
+  },
+  {
+    "id": "W5",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "Fíjate que los últimos cinco hotfix los hizo Diego sin esperar review. O sea, el equipo claramente prefiere velocidad sobre proceso en los hotfix.", "timestamp": "2026-09-09T12:10:00Z"},
+      {"id": "m2", "role": "assistant", "content": "Es una inferencia interesante: cinco hotfix recientes de Diego sin esperar review. Aunque con esa muestra no confirmaría una preferencia del equipo completo, ¿quieres que lo anote como observación?", "timestamp": "2026-09-09T12:10:22Z"},
+      {"id": "m3", "role": "user", "content": "Anótalo. Es que además siempre usan la rama hotfix/ y saltan el pipeline de staging, así que está claro el patrón.", "timestamp": "2026-09-09T12:11:00Z"},
+      {"id": "m4", "role": "assistant", "content": "Registrado como observación: hotfix vía rama hotfix/, sin review y saltando staging en los casos recientes. Lo marco como patrón observado, no como política confirmada.", "timestamp": "2026-09-09T12:11:15Z"},
+      {"id": "m5", "role": "user", "content": "Sí, sí. A ver si en el retro lo discutimos y lo formalizamos o lo frenamos.", "timestamp": "2026-09-09T12:12:00Z"}
+    ]
+  },
+  {
+    "id": "W6",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "Buenos días Maya, ¿cómo va el refactor del módulo de notificaciones?", "timestamp": "2026-09-09T08:55:00Z"},
+      {"id": "m2", "role": "user", "content": "Ah, y disculpa que cambie de tema, anoche fui a un concierto de jazz y hoy ando muerto, pero contento.", "timestamp": "2026-09-09T08:56:10Z"},
+      {"id": "m3", "role": "assistant", "content": "Buenos días. El refactor va bien: ya migré los 3 workers a la nueva interfaz y el PR #482 está abierto. Y qué bueno lo del jazz, ¿tocaron estándares o cosas nuevas?", "timestamp": "2026-09-09T08:56:30Z"},
+      {"id": "m4", "role": "user", "content": "Estándares, casi todo Coltrane. Por cierto, soy alérgico al marisco, nada que ver, pero lo digo porque el viernes es el team lunch.", "timestamp": "2026-09-09T08:57:05Z"},
+      {"id": "m5", "role": "assistant", "content": "Buena data para el team lunch del viernes, lo tendré presente. Sobre el PR #482: faltan los tests del worker de SMS, ¿los subo hoy?", "timestamp": "2026-09-09T08:57:20Z"},
+      {"id": "m6", "role": "user", "content": "Sí, súbelos hoy porfa y pídeme review.", "timestamp": "2026-09-09T08:58:00Z"}
+    ]
+  },
+  {
+    "id": "W7",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "El lunes otra vez pasé el reporte semanal a las 8am antes del standup, como siempre.", "timestamp": "2026-09-09T09:30:00Z"},
+      {"id": "m2", "role": "assistant", "content": "Sí, el reporte semanal de los lunes a las 8am antes del standup. ¿Necesitas que prepare algo para el de la próxima semana?", "timestamp": "2026-09-09T09:30:18Z"},
+      {"id": "m3", "role": "user", "content": "No, solo contexto. Igual que siempre reviso los dashboards de Grafana antes de escribirlo y casi nunca encuentro nada raro.", "timestamp": "2026-09-09T09:31:00Z"},
+      {"id": "m4", "role": "assistant", "content": "Entendido. ¿Y para los deployments de martes y jueves mantienes la ventana de las 10am? He visto que sueles elegir esa hora.", "timestamp": "2026-09-09T09:31:20Z"},
+      {"id": "m5", "role": "user", "content": "Sí, a las 10am, que ya están todos en línea. Y los viernes nunca deployo, obviamente.", "timestamp": "2026-09-09T09:32:00Z"},
+      {"id": "m6", "role": "assistant", "content": "Claro. Resumen de contexto: reportes lunes 8am tras revisar Grafana, deploys martes/jueves ~10am, viernes sin deploys.", "timestamp": "2026-09-09T09:32:15Z"}
+    ]
+  },
+  {
+    "id": "W8",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "Maya, ya está el fix del índice en la migración 0042_add_orders_idx.sql. Corre la migración en staging cuando puedas.", "timestamp": "2026-09-09T15:00:00Z"},
+      {"id": "m2", "role": "assistant", "content": "Perfecto, ejecuto: `./scripts/run_migrations.sh --env staging --target 0042`. Te comparto la salida cuando termine.", "timestamp": "2026-09-09T15:00:25Z"},
+      {"id": "m3", "role": "user", "content": "Va. Acuérdate que primero hay que poner el servicio en modo mantenimiento: `make maintenance on ENV=staging`.", "timestamp": "2026-09-09T15:01:00Z"},
+      {"id": "m4", "role": "assistant", "content": "Hecho, modo mantenimiento activado y migración 0042 aplicada en staging en 3.2s. El índice se creó con CONCURRENTLY, sin locks. ¿Desactivo mantenimiento y corro el smoke test?", "timestamp": "2026-09-09T15:03:10Z"},
+      {"id": "m5", "role": "user", "content": "Sí, desactívalo y ejecuta el deploy script para que staging quede con la build nueva: `./deploy.sh staging latest`.", "timestamp": "2026-09-09T15:04:00Z"},
+      {"id": "m6", "role": "assistant", "content": "Deploy ejecutado en staging, build `a91f3c2` corriendo y smoke tests en verde (12/12). Listo para replicar en producción el jueves.", "timestamp": "2026-09-09T15:07:45Z"}
+    ]
+  },
+  {
+    "id": "B1",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "Equipo, planning del sprint 34. Objetivo: cerrar el módulo de facturación electrónica. Maya, ¿status del parser de CFDI?", "timestamp": "2026-09-09T10:00:00Z"},
+      {"id": "m2", "role": "user", "content": "Parser de CFDI al 80%, falta el caso de complementos de pago. Lo tengo para el jueves.", "timestamp": "2026-09-09T10:01:30Z"},
+      {"id": "m3", "role": "user", "content": "Bien. Alice, tú tomas la integración con el PAC de pruebas, el sandbox nos dio credenciales nuevas el lunes.", "timestamp": "2026-09-09T10:02:10Z"},
+      {"id": "m4", "role": "user", "content": "Va. Abro el PR contra feature/facturacion-electronica hoy mismo.", "timestamp": "2026-09-09T10:02:40Z"},
+      {"id": "m5", "role": "user", "content": "Última cosa: el deadline para el demo con el cliente es el 22 de septiembre, así que dejemos margen para QA la semana del 15.", "timestamp": "2026-09-09T10:03:20Z"},
+      {"id": "m6", "role": "user", "content": "Anotado. Congelar features el 17 y dedicar dos días solo a QA me parece.", "timestamp": "2026-09-09T10:04:00Z"}
+    ]
+  },
+  {
+    "id": "B2",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "Gente, el job de sync nocturno falló de nuevo anoche. Error 500 en el endpoint /v2/inventory/sync, timeout del worker después de 30s.", "timestamp": "2026-09-09T08:15:00Z"},
+      {"id": "m2", "role": "user", "content": "Vi los logs en Datadog: el worker se cuelga en la query de reconciliation, la tabla inventory_ledger tiene 40M de filas y el plan hace un seq scan.", "timestamp": "2026-09-09T08:16:20Z"},
+      {"id": "m3", "role": "user", "content": "Clásico. Falta índice en (warehouse_id, created_at), lo comprobé en staging y el plan cambia a index scan, la query baja de 28s a 400ms.", "timestamp": "2026-09-09T08:17:45Z"},
+      {"id": "m4", "role": "user", "content": "Perfecto. Subo la migración 0043_add_ledger_idx hoy y re-corremos el job esta noche para validar.", "timestamp": "2026-09-09T08:18:30Z"},
+      {"id": "m5", "role": "user", "content": "Voy a revisar el ticket INV-281 y lo muevo a In Progress con este hallazgo.", "timestamp": "2026-09-09T08:19:10Z"}
+    ]
+  },
+  {
+    "id": "B3",
+    "messages": [
+      {"id": "m1", "role": "user", "content": "Maya, dejé comentarios en el PR #482 del refactor de notificaciones. En general se ve bien, pero hay dos cosas.", "timestamp": "2026-09-09T13:30:00Z"},
+      {"id": "m2", "role": "user", "content": "La primera: el retry del worker de email usa un sleep fijo de 5s, mejor backoff exponencial como en el worker de push.", "timestamp": "2026-09-09T13:31:00Z"},
+      {"id": "m3", "role": "user", "content": "Cierto, me lo perdí. Lo cambio y reuso el helper exponentialBackoff() que ya existe en pkg/retry.", "timestamp": "2026-09-09T13:32:15Z"},
+      {"id": "m4", "role": "user", "content": "La segunda: en el test TestNotifyOrderShipped hay un mock del SMTP client que se carga con reflection, frágil. ¿Puedes usar la interfaz de testdata como en los otros tests?", "timestamp": "2026-09-09T13:33:00Z"},
+      {"id": "m5", "role": "user", "content": "Sí, lo muevo a la fixture de testdata y agrego un caso para el timeout del SMTP. Push del fix en un rato.", "timestamp": "2026-09-09T13:34:00Z"},
+      {"id": "m6", "role": "user", "content": "Genial. Con eso te doy el approve y puede entrar al merge train de las 17:00.", "timestamp": "2026-09-09T13:35:00Z"}
+    ]
+  }
+]
