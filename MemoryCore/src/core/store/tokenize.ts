@@ -54,6 +54,46 @@ export const ZH_STOP_WORDS = new Set([
 ]);
 
 /**
+ * Matches a run of CJK characters (Han / Hiragana / Katakana), with a capture
+ * group so `String.split` keeps the CJK runs in the result.
+ */
+const CJK_RUN_CAPTURE = /((?:[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}])+)/gu;
+
+const LATIN_WORD = /[\p{L}\p{N}_]+/gu;
+
+function isCjkRun(s: string): boolean {
+  return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(s);
+}
+
+/**
+ * Language-aware segmentation used by both the index side (tokenizeForFts)
+ * and the query side (buildFtsQuery / extractQueryTokens) so tokens always
+ * line up:
+ *   - CJK runs → jieba `cutForSearch` (when available), as before.
+ *   - Non-CJK runs (Latin, Cyrillic, etc.) → whole-word regex tokens.
+ *
+ * Fix (2026-09-10): jieba previously ran over the WHOLE string, splitting
+ * accented Latin words at diacritics ("módulo" → m/ó/dulo, "facturación" →
+ * facturaci/n). Chinese behavior is unchanged.
+ */
+function segmentTokens(raw: string): string[] {
+  const jieba = getJieba();
+  if (!jieba) {
+    return raw.match(LATIN_WORD) ?? [];
+  }
+  const tokens: string[] = [];
+  for (const piece of raw.split(CJK_RUN_CAPTURE)) {
+    if (!piece) continue;
+    if (isCjkRun(piece)) {
+      tokens.push(...jieba.cutForSearch(piece, true));
+    } else {
+      tokens.push(...(piece.match(LATIN_WORD) ?? []));
+    }
+  }
+  return tokens.map((t) => t.trim()).filter(Boolean);
+}
+
+/**
  * Build an FTS5 MATCH query from raw text.
  *
  * When `@node-rs/jieba` is available, uses jieba's search-engine mode
@@ -71,27 +111,13 @@ export const ZH_STOP_WORDS = new Set([
  *   "旅行计划 API" → '"旅行计划" OR "API"'
  */
 export function buildFtsQuery(raw: string): string | null {
-  const jieba = getJieba();
-
-  let tokens: string[];
-  if (jieba) {
-    tokens = jieba
-      .cutForSearch(raw, true)
-      .map((t) => t.trim())
-      .filter((t) => {
-        if (!t) return false;
-        if (!/[\p{L}\p{N}]/u.test(t)) return false;
-        if (ZH_STOP_WORDS.has(t)) return false;
-        return true;
-      });
-    tokens = [...new Set(tokens)];
-  } else {
-    tokens =
-      raw
-        .match(/[\p{L}\p{N}_]+/gu)
-        ?.map((t) => t.trim())
-        .filter(Boolean) ?? [];
-  }
+  const tokens = [...new Set(
+    segmentTokens(raw).filter((t) => {
+      if (!/[\p{L}\p{N}]/u.test(t)) return false;
+      if (ZH_STOP_WORDS.has(t)) return false;
+      return true;
+    }),
+  )];
 
   if (tokens.length === 0) return null;
   const quoted = tokens.map((t) => `"${t.replaceAll('"', "")}"`);
@@ -107,25 +133,12 @@ export function buildFtsQuery(raw: string): string | null {
  * Returns `[]` when nothing meaningful remains.
  */
 export function extractQueryTokens(raw: string): string[] {
-  const jieba = getJieba();
-  if (jieba) {
-    const tokens = jieba
-      .cutForSearch(raw, true)
-      .map((t) => t.trim())
-      .filter((t) => {
-        if (!t) return false;
-        if (!/[\p{L}\p{N}]/u.test(t)) return false;
-        if (ZH_STOP_WORDS.has(t)) return false;
-        return true;
-      });
-    return [...new Set(tokens)];
-  }
-  return (
-    raw
-      .match(/[\p{L}\p{N}_]+/gu)
-      ?.map((t) => t.trim())
-      .filter(Boolean) ?? []
-  );
+  const tokens = segmentTokens(raw).filter((t) => {
+    if (!/[\p{L}\p{N}]/u.test(t)) return false;
+    if (ZH_STOP_WORDS.has(t)) return false;
+    return true;
+  });
+  return [...new Set(tokens)];
 }
 
 /**
@@ -143,10 +156,7 @@ export function extractQueryTokens(raw: string): string[] {
  *   "人工智能的分支"     → "人工 智能 人工智能 的 分支"
  */
 export function tokenizeForFts(raw: string): string {
-  const jieba = getJieba();
-  if (!jieba) return raw;
-  const tokens = jieba.cutForSearch(raw, true);
-  return tokens.join(" ");
+  return segmentTokens(raw).join(" ");
 }
 
 /**

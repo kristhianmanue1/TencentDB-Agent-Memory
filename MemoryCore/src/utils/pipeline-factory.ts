@@ -731,7 +731,7 @@ export function createL2Runner(opts: {
       return;
     }
 
-    let records: Array<{ content: string; created_at: string; id: string; updatedAt: string; teamId?: string; userId?: string; agentId?: string; sessionId?: string; taskId?: string }>;
+    let records: Array<{ content: string; created_at: string; id: string; updatedAt: string; teamId?: string; userId?: string; agentId?: string; sessionId?: string; taskId?: string; type?: string; priority?: number; epistemic_status?: string; authority_source?: string }>;
 
     if (vectorStore && !vectorStore.isDegraded()) {
       const { queryMemoryRecords } = await import("../core/record/l1-reader.js");
@@ -767,6 +767,10 @@ export function createL2Runner(opts: {
         agentId: r.agentId,
         sessionId: r.sessionId,
         taskId: r.taskId,
+        type: r.type,
+        priority: r.priority,
+        epistemic_status: r.epistemic_status,
+        authority_source: r.authority_source,
       }));
     } else {
       throw new Error(`${TAG} [L2] VectorStore unavailable — cannot read L1 memories for scene extraction (session=${sessionKey})`);
@@ -827,6 +831,10 @@ export function createL2Runner(opts: {
         content: r.content,
         created_at: r.created_at,
         id: r.id,
+        type: r.type,
+        priority: r.priority,
+        epistemic_status: r.epistemic_status,
+        authority_source: r.authority_source,
       }));
 
       const preCheckpoint = new CheckpointManager(groupDataDir, logger, groupStorage, checkpointLock);

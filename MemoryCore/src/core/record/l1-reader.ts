@@ -63,6 +63,15 @@ function rowToMemoryRecord(row: L1RecordRow): MemoryRecord {
     // malformed JSON — use empty object
   }
 
+  // [authority data-plane] Restore provenance columns (absent on pre-patch rows).
+  let sourceIds: string[] = [];
+  if (row.source_message_ids_json) {
+    try {
+      const parsed = JSON.parse(row.source_message_ids_json);
+      if (Array.isArray(parsed)) sourceIds = parsed.map(String);
+    } catch { /* malformed json -> empty */ }
+  }
+
   // Reconstruct timestamps array from timestamp_start / timestamp_end
   const timestamps: string[] = [];
   if (row.timestamp_str) timestamps.push(row.timestamp_str);
@@ -77,7 +86,9 @@ function rowToMemoryRecord(row: L1RecordRow): MemoryRecord {
     type: row.type as MemoryType,
     priority: row.priority,
     scene_name: row.scene_name,
-    source_message_ids: [], // not stored in SQLite (vector search doesn't need them)
+    source_message_ids: sourceIds,
+    epistemic_status: (row.epistemic_status as MemoryRecord["epistemic_status"]) ?? "inferred",
+    authority_source: (row.authority_source as MemoryRecord["authority_source"]) ?? "unknown",
     metadata,
     timestamps,
     createdAt: row.created_time,

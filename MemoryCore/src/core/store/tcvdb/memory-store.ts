@@ -135,6 +135,8 @@ const L1_OUTPUT_FIELDS = [
   "id", "text", "type", "priority", "scene_name",
   "team_id", "user_id", "agent_id", "session_key", "session_id", "task_id", "version", "timestamp_str", "timestamp_start",
   "timestamp_end", "metadata_json", "created_time_ms", "updated_time_ms",
+  // [authority data-plane] pre-patch documents lack these — readers default honestly.
+  "epistemic_status", "authority_source", "source_message_ids_json",
 ];
 
 /** All L0 output fields returned by query/search. */
@@ -687,6 +689,9 @@ export class TcvdbMemoryStore implements IMemoryStore {
       created_time_ms: isoToEpochMs(record.createdAt),
       updated_time_ms: isoToEpochMs(record.updatedAt),
       metadata_json: JSON.stringify(record.metadata),
+      epistemic_status: record.epistemic_status ?? "inferred",
+      authority_source: record.authority_source ?? "unknown",
+      source_message_ids_json: JSON.stringify(record.source_message_ids ?? []),
       memory_type: DEFAULT_MEMORY_TYPE,
     };
     if (!this.embeddingEnabled) doc.vector = [1];
@@ -738,6 +743,9 @@ export class TcvdbMemoryStore implements IMemoryStore {
           created_time_ms: isoToEpochMs(record.createdAt),
           updated_time_ms: isoToEpochMs(record.updatedAt),
           metadata_json: JSON.stringify(record.metadata),
+          epistemic_status: record.epistemic_status ?? "inferred",
+          authority_source: record.authority_source ?? "unknown",
+          source_message_ids_json: JSON.stringify(record.source_message_ids ?? []),
           memory_type: DEFAULT_MEMORY_TYPE,
         };
         if (!this.embeddingEnabled) doc.vector = [1];
@@ -895,6 +903,9 @@ export class TcvdbMemoryStore implements IMemoryStore {
           created_time: epochMsToIso(Number(doc.created_time_ms ?? 0)),
           updated_time: epochMsToIso(Number(doc.updated_time_ms ?? 0)),
           metadata_json: String(doc.metadata_json ?? "{}"),
+          epistemic_status: String(doc.epistemic_status ?? "inferred"),
+          authority_source: String(doc.authority_source ?? "unknown"),
+          source_message_ids_json: String(doc.source_message_ids_json ?? "[]"),
         }));
       }
 
@@ -927,6 +938,9 @@ export class TcvdbMemoryStore implements IMemoryStore {
         created_time: epochMsToIso(Number(doc.created_time_ms ?? 0)),
         updated_time: epochMsToIso(Number(doc.updated_time_ms ?? 0)),
         metadata_json: String(doc.metadata_json ?? "{}"),
+        epistemic_status: String(doc.epistemic_status ?? "inferred"),
+        authority_source: String(doc.authority_source ?? "unknown"),
+        source_message_ids_json: String(doc.source_message_ids_json ?? "[]"),
       }));
     } catch (err) {
       this.logger?.warn(`${TAG} [L1-query] FAILED: ${err instanceof Error ? err.message : String(err)}`);
@@ -1951,6 +1965,9 @@ export class TcvdbMemoryStore implements IMemoryStore {
         created_time: d.created_time_ms ? new Date(d.created_time_ms).toISOString() : "",
         updated_time: d.updated_time_ms ? new Date(d.updated_time_ms).toISOString() : "",
         metadata_json: d.metadata_json ?? "{}",
+        epistemic_status: d.epistemic_status ?? "inferred",
+        authority_source: d.authority_source ?? "unknown",
+        source_message_ids_json: d.source_message_ids_json ?? "[]",
       }));
 
       return { rows, total };
@@ -2059,6 +2076,9 @@ export class TcvdbMemoryStore implements IMemoryStore {
         agent_id: String(doc.agent_id ?? ""),
         version: Number(doc.version ?? 0),
         metadata_json: String(doc.metadata_json ?? "{}"),
+        epistemic_status: String(doc.epistemic_status ?? "inferred"),
+        authority_source: String(doc.authority_source ?? "unknown"),
+        source_message_ids_json: String(doc.source_message_ids_json ?? "[]"),
       });
     }
     return results;

@@ -16,9 +16,9 @@ import type { ConversationMessage } from "../conversation/l0-recorder.js";
 import { formatExtractionPrompt, getExtractMemoriesSystemPrompt, type MemoryPromptMode } from "../prompts/l1-extraction.js";
 import { batchDedup } from "./l1-dedup.js";
 import { writeMemory, generateMemoryId } from "./l1-writer.js";
-import type { ExtractedMemory, MemoryRecord, MemoryType, DedupDecision } from "./l1-writer.js";
+import type { ExtractedMemory, MemoryRecord, MemoryType, DedupDecision, EpistemicStatus, AuthoritySource } from "./l1-writer.js";
 import { CleanContextRunner } from "../../utils/clean-context-runner.js";
-import { sanitizeJsonForParse, shouldExtractL1 } from "../../utils/sanitize.js";
+import { sanitizeJsonForParse, shouldExtractL1, looksLikePromptInjection } from "../../utils/sanitize.js";
 import type { IMemoryStore } from "../store/types.js";
 import type { EmbeddingService } from "../store/embedding.js";
 import { report } from "../report/reporter.js";
@@ -57,8 +57,81 @@ interface SceneSegment {
     type: string;
     priority: number;
     source_message_ids: string[];
+    /** LLM-declared epistemic status; absent/invalid → "inferred" (parser default). */
+    epistemic_status?: string;
     metadata: Record<string, unknown>;
   }>;
+}
+
+// ============================
+// Authority derivation (mechanical)
+// ============================
+
+const VALID_EPISTEMIC_STATUSES: EpistemicStatus[] = ["declared", "inferred", "external"];
+
+/**
+ * Derive authority_source from the roles of the referenced L0 messages.
+ * Mechanical rule (no LLM involved):
+ *   - no valid referenced message            -> "unknown"
+ *   - any user message in the sources        -> "user_direct" (or "user_relayed"
+ *     for external content). Assistant messages that merely echo or confirm a
+ *     user statement do NOT downgrade authority: they are downstream of the
+ *     user's declaration (every assistant message replies to a user turn).
+ *   - assistant-only sources                 -> "assistant_involved"
+ * Pre-existing rows written before this field existed carry "unknown".
+ */
+export function deriveAuthoritySource(
+  sourceIds: string[],
+  roleById: Map<string, string>,
+  epistemicStatus: EpistemicStatus,
+): AuthoritySource {
+  let sawUser = false;
+  let sawAssistant = false;
+  let sawValid = false;
+  for (const id of sourceIds) {
+    const role = roleById.get(id);
+    if (!role) continue;
+    sawValid = true;
+    if (role === "assistant") sawAssistant = true;
+    else if (role === "user") sawUser = true;
+  }
+  if (!sawValid) return "unknown";
+  if (sawUser) return epistemicStatus === "external" ? "user_relayed" : "user_direct";
+  if (sawAssistant) return "assistant_involved";
+  return "unknown";
+}
+
+// ============================
+// Injection triage (§4.1 of the hardening patch)
+// ============================
+
+/**
+ * Cumulative count of memories whose authority was degraded because at least
+ * one of their source messages matched the prompt-injection detector.
+ * Triage, not hard drop: flagged messages may still yield episodic/work_fact
+ * memories, but never prescriptive types (instruction / work_method /
+ * work_task), which are retyped and forced to epistemic_status="external".
+ */
+let l1InjectionTriagedCount = 0;
+
+/** Read-and-report helper for metrics/receipts. */
+export function getL1InjectionTriagedCount(): number {
+  return l1InjectionTriagedCount;
+}
+
+/** Cumulative dedup decision distribution (process-wide, like triage counter). */
+const l1DedupDecisionCounts = { store: 0, update: 0, merge: 0, skip: 0 };
+
+/** Cumulative write outcomes for dedup decisions. */
+const l1DedupWriteOutcomeCounts = { written: 0, skipped: 0, failed: 0 };
+
+/** Read-and-report helpers for receipts/arneses standalone. */
+export function getL1DedupDecisionCounts(): { store: number; update: number; merge: number; skip: number } {
+  return { ...l1DedupDecisionCounts };
+}
+
+export function getL1DedupWriteOutcomeCounts(): { written: number; skipped: number; failed: number } {
+  return { ...l1DedupWriteOutcomeCounts };
 }
 
 export interface L1ExtractionResult {
@@ -156,6 +229,25 @@ export async function extractL1Memories(params: {
     return { success: true, extractedCount: 0, storedCount: 0, records: [], sceneNames: [] };
   }
 
+  // [authority data-plane] Role index over ALL input messages (not just the
+  // qualified subset) so source_message_ids referencing any captured message
+  // resolve. Unknown ids (LLM-hallucinated or evicted) -> "unknown" authority.
+  const roleById = new Map<string, string>();
+  for (const m of messages) {
+    roleById.set(m.id, m.role);
+  }
+
+  // [injection triage] Messages matching the prompt-injection detector keep
+  // flowing to the LLM but are barred from originating prescriptive types.
+  const flaggedIds = new Set(
+    messages.filter((m) => looksLikePromptInjection(m.content)).map((m) => m.id),
+  );
+  if (flaggedIds.size > 0) {
+    logger?.warn?.(
+      `${TAG} Injection triage: ${flaggedIds.size} message(s) flagged; prescriptive extraction barred from them`,
+    );
+  }
+
   const l1StartMs = Date.now();
 
   // Quality gate: filter messages through L1 extraction rules (length, symbols,
@@ -228,11 +320,42 @@ export async function extractL1Memories(params: {
         logger?.warn?.(`${TAG} Skipping memory with invalid type "${mem.type}"`);
         continue;
       }
+      const epistemicStatus: EpistemicStatus = VALID_EPISTEMIC_STATUSES.includes(mem.epistemic_status as EpistemicStatus)
+        ? (mem.epistemic_status as EpistemicStatus)
+        : "inferred";
+      let finalType: MemoryType = memType;
+      let finalEpistemic: EpistemicStatus = epistemicStatus;
+      // [injection triage] A memory sourced (even partially) from a flagged
+      // message cannot be prescriptive. Degrade, never discard: retype to the
+      // informational type of the family and force epistemic_status="external".
+      const touchesFlagged = (Array.isArray(mem.source_message_ids) ? mem.source_message_ids : [])
+        .some((id) => flaggedIds.has(id));
+      if (touchesFlagged) {
+        const promptMode = options.promptMode ?? "chat";
+        const prescriptive = promptMode === "code"
+          ? (finalType === "work_method" || finalType === "work_task")
+          : (finalType === "instruction");
+        if (prescriptive) {
+          finalType = promptMode === "code" ? "work_fact" : "episodic";
+          finalEpistemic = "external";
+          l1InjectionTriagedCount += 1;
+          logger?.warn?.(
+            `${TAG} l1_injection_triaged_count=${l1InjectionTriagedCount} ` +
+            `type ${memType} -> ${finalType} (sources: ${(Array.isArray(mem.source_message_ids) ? mem.source_message_ids : []).join(",")})`,
+          );
+        }
+      }
       allExtracted.push({
         content: mem.content,
-        type: memType,
+        type: finalType,
         priority: typeof mem.priority === "number" ? mem.priority : 50,
         source_message_ids: Array.isArray(mem.source_message_ids) ? mem.source_message_ids : [],
+        epistemic_status: finalEpistemic,
+        authority_source: deriveAuthoritySource(
+          Array.isArray(mem.source_message_ids) ? mem.source_message_ids : [],
+          roleById,
+          finalEpistemic,
+        ),
         metadata: mem.metadata ?? {},
         scene_name: scene.scene_name,
       });
@@ -324,15 +447,23 @@ export async function extractL1Memories(params: {
       });
       dedupLatencyMs = Date.now() - dedupStartMs;
 
+      // ── Dedup observability ──
+      // Always logged: standalone runs have no metricProducer, and this is the
+      // only place the skip/merge/store split becomes visible.
+      const dedupCounts = { store: 0, update: 0, merge: 0, skip: 0 };
+      for (const d of decisions) {
+        if (d.action in dedupCounts) {
+          dedupCounts[d.action as keyof typeof dedupCounts]++;
+        }
+      }
+      for (const key of Object.keys(dedupCounts) as Array<keyof typeof dedupCounts>) {
+        l1DedupDecisionCounts[key] += dedupCounts[key];
+      }
+      logger?.info?.(`${TAG} [dedup-decisions] store=${dedupCounts.store} update=${dedupCounts.update} merge=${dedupCounts.merge} skip=${dedupCounts.skip}`);
+
       // ── 评测指标：去重决策分布 ──
       if (metricInstanceId) {
         try {
-          const dedupCounts = { store: 0, update: 0, merge: 0, skip: 0 };
-          for (const d of decisions) {
-            if (d.action in dedupCounts) {
-              dedupCounts[d.action as keyof typeof dedupCounts]++;
-            }
-          }
           metricProducer.send({ metric: "l1_dedup_store_count", instanceId: metricInstanceId, value: dedupCounts.store, source: "core" });
           metricProducer.send({ metric: "l1_dedup_update_count", instanceId: metricInstanceId, value: dedupCounts.update, source: "core" });
           metricProducer.send({ metric: "l1_dedup_merge_count", instanceId: metricInstanceId, value: dedupCounts.merge, source: "core" });
@@ -651,6 +782,14 @@ function parseExtractionResult(raw: string, logger?: Logger): ParseExtractionOut
                 type: String(m.type ?? "episodic"),
                 priority: typeof m.priority === "number" ? m.priority : 50,
                 source_message_ids: Array.isArray(m.source_message_ids) ? m.source_message_ids.map(String) : [],
+                // [authority data-plane] Keep the LLM-declared epistemic status.
+                // Absent/invalid -> "inferred": the LEAST authoritative default,
+                // never "declared" (fail-safe against escalation).
+                epistemic_status:
+                  typeof m.epistemic_status === "string" &&
+                  VALID_EPISTEMIC_STATUSES.includes(m.epistemic_status as EpistemicStatus)
+                    ? (m.epistemic_status as EpistemicStatus)
+                    : "inferred",
                 metadata: (m.metadata && typeof m.metadata === "object" ? m.metadata : {}) as Record<string, unknown>,
               }))
           : [],
@@ -737,8 +876,14 @@ async function applyDecisions(params: {
 
       if (record) {
         storedRecords.push(record);
+        l1DedupWriteOutcomeCounts.written++;
+        logger?.info?.(`${TAG} [dedup-apply] id=${memoryWithId.record_id} action=${decision.action} -> written ${record.id}`);
+      } else {
+        l1DedupWriteOutcomeCounts.skipped++;
+        logger?.info?.(`${TAG} [dedup-apply] id=${memoryWithId.record_id} action=${decision.action} -> skipped (writeMemory null)`);
       }
     } catch (err) {
+      l1DedupWriteOutcomeCounts.failed++;
       logger?.warn?.(
         `${TAG} Write failed for memory "${memoryWithId.content.slice(0, 50)}...": ${err instanceof Error ? err.message : String(err)}`,
       );

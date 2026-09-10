@@ -72,6 +72,11 @@ export interface L1SearchResult {
   user_id: string;
   agent_id: string;
   metadata_json: string;
+  /** [authority data-plane] Absent on pre-patch rows / backends not yet migrated. */
+  epistemic_status?: string;
+  authority_source?: string;
+  /** JSON-encoded array of source message ids. */
+  source_message_ids_json?: string;
 }
 
 /** Result from an L1 FTS keyword search. */
@@ -94,6 +99,11 @@ export interface L1FtsResult {
   user_id: string;
   agent_id: string;
   metadata_json: string;
+  /** [authority data-plane] Absent on pre-patch rows / backends not yet migrated. */
+  epistemic_status?: string;
+  authority_source?: string;
+  /** JSON-encoded array of source message ids. */
+  source_message_ids_json?: string;
 }
 
 /** Filter options for querying L1 records. */
@@ -131,6 +141,11 @@ export interface L1RecordRow {
   created_time: string;
   updated_time: string;
   metadata_json: string;
+  /** [authority data-plane] Defaults apply on pre-patch rows: "inferred"/"unknown"/"[]". */
+  epistemic_status?: string;
+  authority_source?: string;
+  /** JSON-encoded array of source message ids. */
+  source_message_ids_json?: string;
 }
 
 // ============================

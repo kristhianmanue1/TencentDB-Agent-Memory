@@ -6,6 +6,7 @@ import { getTdaiIdentity } from "../../tdai/identity.js";
 import type { CoreSkillConfig } from "../../types.js";
 import { getMetadataClient } from "../../meta/client.js";
 import { resolveFixedAssetCtxs, type FixedAssetCtx } from "./tdai-fixed-asset.js";
+import { neutralizeClosingTags, MEMORY_DATA_FRAMING_ZH } from "./tdai-tag-guard.js";
 
 /**
  * L2/L3 注入（按 openclaw / hermes 官方做法重构）：
@@ -92,6 +93,7 @@ export class TdaiProfileMemoryInjector implements InjectionHook {
     const lines: string[] = [
       "<tdai_profile_memory>",
       "以下是 TDAI 为当前 agent 维护的长期工作记忆（自有 + 借入分段；L2 仅给索引，按需用工具读全文）：",
+      MEMORY_DATA_FRAMING_ZH,
     ];
 
     let l2TotalCount = 0;
@@ -100,11 +102,11 @@ export class TdaiProfileMemoryInjector implements InjectionHook {
       if (!g.l3 && g.l2Entries.length === 0) continue;
       const tag = g.ctx.isSelf ? "self" : "imported_from";
       lines.push(
-        `<agent name=${JSON.stringify(g.ctx.agentName)} role=${JSON.stringify(tag)} agent_id=${JSON.stringify(g.ctx.agentId)}>`,
+        `<agent name=${JSON.stringify(neutralizeClosingTags(g.ctx.agentName))} role=${JSON.stringify(tag)} agent_id=${JSON.stringify(g.ctx.agentId)}>`,
       );
       if (g.l3?.content) {
         l3Count++;
-        lines.push("<l3_core_memory>", truncate(g.l3.content, 6000), "</l3_core_memory>");
+        lines.push("<l3_core_memory>", neutralizeClosingTags(truncate(g.l3.content, 6000)), "</l3_core_memory>");
       }
       if (g.l2Entries.length > 0) {
         lines.push("<l2_scene_index>");
@@ -112,7 +114,7 @@ export class TdaiProfileMemoryInjector implements InjectionHook {
           l2TotalCount++;
           // 索引行：路径 + summary（如果有）；正文用 tool 拉
           if (e.summary) {
-            lines.push(`- \`${e.path}\` — ${truncate(e.summary, 200)}`);
+            lines.push(`- \`${e.path}\` — ${neutralizeClosingTags(truncate(e.summary, 200))}`);
           } else {
             lines.push(`- \`${e.path}\``);
           }

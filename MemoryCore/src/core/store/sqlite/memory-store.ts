@@ -102,6 +102,11 @@ export interface VectorSearchResult {
   agent_id: string;
   /** Raw metadata JSON string (e.g., contains activity_start_time / activity_end_time for episodic) */
   metadata_json: string;
+  /** [authority data-plane] Absent on pre-patch rows. */
+  epistemic_status?: string;
+  authority_source?: string;
+  /** JSON-encoded array of source message ids. */
+  source_message_ids_json?: string;
 }
 
 /** L0 single-message vector search result. */
@@ -199,6 +204,11 @@ export interface FtsSearchResult {
   user_id: string;
   agent_id: string;
   metadata_json: string;
+  /** [authority data-plane] Absent on FTS tables not yet migrated to v6. */
+  epistemic_status?: string;
+  authority_source?: string;
+  /** JSON-encoded array of source message ids. */
+  source_message_ids_json?: string;
 }
 
 /** FTS5 search result for L0 records. */
@@ -236,6 +246,7 @@ export class VectorStore implements IMemoryStore {
    * become safe no-ops so the plugin never blocks the main OpenClaw flow.
    */
   private degraded = false;
+  private initialized = false;
 
   /** Tracks whether close() has been called to prevent double-close errors. */
   private closed = false;
@@ -365,6 +376,15 @@ export class VectorStore implements IMemoryStore {
    *   so the caller can schedule a full re-embed.
    */
   init(providerInfo?: EmbeddingProviderInfo): VectorStoreInitResult {
+    // Idempotency guard: init() must be safe to call more than once (e.g. a
+    // long-lived store re-initialized across sessions). Re-running
+    // enableLoadExtension + sqlite-vec load on an already-broken-in connection
+    // corrupts native state and can hard-crash the process (observed SIGSEGV in
+    // node:sqlite EnableLoadExtension), so a successful init is terminal.
+    if (this.initialized && !this.degraded) {
+      this.logger?.debug?.(`${TAG} init() called on already-initialized store; ignoring`);
+      return { needsReindex: false };
+    }
     // Load sqlite-vec extension only when vector tables are needed.
     // dimensions=0 is a supported metadata/FTS-only mode and must not degrade
     // just because sqlite-vec is unavailable in the local test/runtime build.
@@ -389,7 +409,9 @@ export class VectorStore implements IMemoryStore {
     // Wrapped in try-catch: if anything fails during schema init (e.g. the DB
     // is corrupted, disk full, etc.), we degrade gracefully instead of crashing.
     try {
-      return this.initSchema(providerInfo);
+      const result = this.initSchema(providerInfo);
+      if (!this.degraded) this.initialized = true;
+      return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger?.error(
@@ -499,7 +521,10 @@ export class VectorStore implements IMemoryStore {
         timestamp_end TEXT DEFAULT '',
         created_time TEXT DEFAULT '',
         updated_time TEXT DEFAULT '',
-        metadata_json TEXT DEFAULT '{}'
+        metadata_json TEXT DEFAULT '{}',
+        epistemic_status TEXT DEFAULT 'inferred',
+        authority_source TEXT DEFAULT 'unknown',
+        source_message_ids_json TEXT DEFAULT '[]'
       )
     `);
 
@@ -510,6 +535,11 @@ export class VectorStore implements IMemoryStore {
     try { this.db.exec("ALTER TABLE l1_records ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* exists */ }
     try { this.db.exec("ALTER TABLE l1_records ADD COLUMN task_id TEXT DEFAULT ''"); } catch { /* exists */ }
     try { this.db.exec("ALTER TABLE l1_records ADD COLUMN version INTEGER NOT NULL DEFAULT 0"); } catch { /* exists */ }
+    // [authority data-plane] Pre-patch rows honestly carry the LEAST authoritative
+    // defaults: "inferred" epistemic status + "unknown" authority + empty sources.
+    try { this.db.exec("ALTER TABLE l1_records ADD COLUMN epistemic_status TEXT DEFAULT 'inferred'"); } catch { /* exists */ }
+    try { this.db.exec("ALTER TABLE l1_records ADD COLUMN authority_source TEXT DEFAULT 'unknown'"); } catch { /* exists */ }
+    try { this.db.exec("ALTER TABLE l1_records ADD COLUMN source_message_ids_json TEXT DEFAULT '[]'"); } catch { /* exists */ }
     this.db.prepare("UPDATE l1_records SET team_id = ? WHERE team_id = '' OR team_id IS NULL").run(DEFAULT_ISOLATION_ID);
     this.db.prepare("UPDATE l1_records SET user_id = ? WHERE user_id = '' OR user_id IS NULL").run(DEFAULT_ISOLATION_ID);
     this.db.prepare("UPDATE l1_records SET agent_id = ? WHERE agent_id = '' OR agent_id IS NULL").run(DEFAULT_ISOLATION_ID);
@@ -556,8 +586,9 @@ export class VectorStore implements IMemoryStore {
         record_id, content, type, priority, scene_name, session_key, session_id,
         team_id, task_id, version, timestamp_str, timestamp_start, timestamp_end,
         created_time, updated_time, metadata_json,
-        user_id, agent_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        user_id, agent_id,
+        epistemic_status, authority_source, source_message_ids_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(record_id) DO UPDATE SET
         content=excluded.content,
         type=excluded.type,
@@ -572,7 +603,10 @@ export class VectorStore implements IMemoryStore {
         updated_time=excluded.updated_time,
         metadata_json=excluded.metadata_json,
         user_id=excluded.user_id,
-        agent_id=excluded.agent_id
+        agent_id=excluded.agent_id,
+        epistemic_status=excluded.epistemic_status,
+        authority_source=excluded.authority_source,
+        source_message_ids_json=excluded.source_message_ids_json
     `);
 
     if (this.dimensions > 0) {
@@ -583,7 +617,8 @@ export class VectorStore implements IMemoryStore {
 
     this.stmtGetMeta = this.db.prepare(`
       SELECT content, type, priority, scene_name, session_key, session_id, team_id, task_id, user_id, agent_id,
-             version, timestamp_str, timestamp_start, timestamp_end, metadata_json
+             version, timestamp_str, timestamp_start, timestamp_end, metadata_json,
+             epistemic_status, authority_source, source_message_ids_json
       FROM l1_records WHERE record_id = ?
     `);
 
@@ -960,7 +995,10 @@ export class VectorStore implements IMemoryStore {
           timestamp_str UNINDEXED,
           timestamp_start UNINDEXED,
           timestamp_end UNINDEXED,
-          metadata_json UNINDEXED
+          metadata_json UNINDEXED,
+          epistemic_status UNINDEXED,
+          authority_source UNINDEXED,
+          source_message_ids_json UNINDEXED
         )
       `);
 
@@ -986,8 +1024,9 @@ export class VectorStore implements IMemoryStore {
       this.stmtL1FtsInsert = this.db.prepare(`
         INSERT INTO l1_fts (content, content_original, record_id, type, priority, scene_name,
           session_key, session_id, team_id, task_id, user_id, agent_id, version,
-          timestamp_str, timestamp_start, timestamp_end, metadata_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          timestamp_str, timestamp_start, timestamp_end, metadata_json,
+          epistemic_status, authority_source, source_message_ids_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       this.stmtL1FtsDelete = this.db.prepare("DELETE FROM l1_fts WHERE record_id = ?");
@@ -997,6 +1036,7 @@ export class VectorStore implements IMemoryStore {
                session_key, session_id, team_id, task_id, user_id, agent_id, version,
                timestamp_str, timestamp_start, timestamp_end,
                metadata_json,
+               epistemic_status, authority_source, source_message_ids_json,
                bm25(l1_fts) AS rank
         FROM l1_fts
         WHERE l1_fts MATCH ?
@@ -1056,7 +1096,8 @@ export class VectorStore implements IMemoryStore {
     const l1QueryCols = `record_id, content, type, priority, scene_name, session_key, session_id,
       team_id, task_id, user_id, agent_id, version,
       timestamp_str, timestamp_start, timestamp_end,
-      created_time, updated_time, metadata_json`;
+      created_time, updated_time, metadata_json,
+      epistemic_status, authority_source, source_message_ids_json`;
 
     this.stmtQueryBySessionId = this.db.prepare(`
       SELECT ${l1QueryCols} FROM l1_records
@@ -1256,6 +1297,10 @@ export class VectorStore implements IMemoryStore {
           JSON.stringify(record.metadata),
           (record as MemoryRecord & { userId?: string }).userId || DEFAULT_ISOLATION_ID,
           (record as MemoryRecord & { agentId?: string }).agentId || DEFAULT_ISOLATION_ID,
+          // [authority data-plane] appended last (binding-order convention)
+          record.epistemic_status ?? "inferred",
+          record.authority_source ?? "unknown",
+          JSON.stringify(record.source_message_ids ?? []),
         );
 
         if (!skipVec) {
@@ -1292,6 +1337,11 @@ export class VectorStore implements IMemoryStore {
               tsStart,
               tsEnd,
               JSON.stringify(record.metadata),
+              // [authority data-plane] mirrored into FTS (post-recall access
+              // without a join); old FTS tables migrate via drop+rebuild.
+              record.epistemic_status ?? "inferred",
+              record.authority_source ?? "unknown",
+              JSON.stringify(record.source_message_ids ?? []),
             );
           } catch (ftsErr) {
             // FTS write failure is non-fatal — log and continue
@@ -1385,6 +1435,9 @@ export class VectorStore implements IMemoryStore {
               timestamp_start: string;
               timestamp_end: string;
               metadata_json: string;
+              epistemic_status: string;
+              authority_source: string;
+              source_message_ids_json: string;
             }
           | undefined;
 
@@ -1420,6 +1473,9 @@ export class VectorStore implements IMemoryStore {
           user_id: meta.user_id ?? "",
           agent_id: meta.agent_id ?? "",
           metadata_json: meta.metadata_json,
+          epistemic_status: meta.epistemic_status,
+          authority_source: meta.authority_source,
+          source_message_ids_json: meta.source_message_ids_json,
         });
       }
 
@@ -2523,7 +2579,7 @@ export class VectorStore implements IMemoryStore {
 
       // Fetch page — must include user_id / agent_id so callers can enforce
       // isolation in downstream filters / Coordinator candidate pool.
-      const dataSql = `SELECT record_id, content, type, priority, scene_name, session_key, session_id, team_id, task_id, user_id, agent_id, version, timestamp_str, timestamp_start, timestamp_end, created_time, updated_time, metadata_json FROM l1_records ${where} ORDER BY updated_time DESC LIMIT ? OFFSET ?`;
+      const dataSql = `SELECT record_id, content, type, priority, scene_name, session_key, session_id, team_id, task_id, user_id, agent_id, version, timestamp_str, timestamp_start, timestamp_end, created_time, updated_time, metadata_json, epistemic_status, authority_source, source_message_ids_json FROM l1_records ${where} ORDER BY updated_time DESC LIMIT ? OFFSET ?`;
       const rows = this.db.prepare(dataSql).all(...params, filter.limit, filter.offset) as unknown as L1RecordRow[];
 
       return { rows, total };
@@ -3025,6 +3081,9 @@ export class VectorStore implements IMemoryStore {
         timestamp_start: string;
         timestamp_end: string;
         metadata_json: string;
+        epistemic_status: string;
+        authority_source: string;
+        source_message_ids_json: string;
         rank: number;
       }>;
 
@@ -3049,6 +3108,9 @@ export class VectorStore implements IMemoryStore {
           user_id: r.user_id ?? "",
           agent_id: r.agent_id ?? "",
           metadata_json: r.metadata_json,
+          epistemic_status: r.epistemic_status,
+          authority_source: r.authority_source,
+          source_message_ids_json: r.source_message_ids_json,
         }));
     } catch (err) {
       this.logger?.warn(
@@ -3147,8 +3209,12 @@ export class VectorStore implements IMemoryStore {
         && cols.some((c) => c.name === "agent_id");
       const hasV4Col = cols.some((c) => c.name === "version");
       const hasV5Col = cols.some((c) => c.name === "task_id");
+      // v6 marker: authority data-plane columns (epistemic_status / authority_source /
+      // source_message_ids_json) mirrored into FTS.
+      const hasV6Col = cols.some((c) => c.name === "epistemic_status")
+        && cols.some((c) => c.name === "authority_source");
 
-      if (hasV2Col && hasV3Col && hasV4Col && hasV5Col) {
+      if (hasV2Col && hasV3Col && hasV4Col && hasV5Col && hasV6Col) {
         return false; // Already current — no migration needed
       }
 
@@ -3157,13 +3223,15 @@ export class VectorStore implements IMemoryStore {
       // from l0_conversations / l1_records (which now carry user_id/agent_id
       // after the L0/L1 schema migration above).
       if (!hasV2Col) {
-        this.logger?.info(`${TAG} Migrating FTS5 tables v1 → v3 (jieba + tenancy isolation)`);
+        this.logger?.info(`${TAG} Migrating FTS5 tables v1 → v6 (jieba + tenancy isolation)`);
       } else if (!hasV3Col) {
-        this.logger?.info(`${TAG} Migrating FTS5 tables v2 → v3 (add user_id / agent_id columns)`);
+        this.logger?.info(`${TAG} Migrating FTS5 tables v2 → v6 (add user_id / agent_id columns)`);
       } else if (!hasV4Col) {
-        this.logger?.info(`${TAG} Migrating FTS5 tables v3 → v4 (add version column)`);
+        this.logger?.info(`${TAG} Migrating FTS5 tables v3 → v6 (add version column)`);
       } else if (!hasV5Col) {
-        this.logger?.info(`${TAG} Migrating FTS5 tables v4 → v5 (add task_id column)`);
+        this.logger?.info(`${TAG} Migrating FTS5 tables v4 → v6 (add task_id column)`);
+      } else if (!hasV6Col) {
+        this.logger?.info(`${TAG} Migrating FTS5 tables v5 → v6 (add authority data-plane columns)`);
       }
       this.db.exec("DROP TABLE IF EXISTS l1_fts");
       this.db.exec("DROP TABLE IF EXISTS l0_fts");
@@ -3198,11 +3266,13 @@ export class VectorStore implements IMemoryStore {
 
       // Read all L1 records from metadata table.
       // Include user_id / agent_id so the rebuilt FTS rows carry isolation info.
+      // Include authority data-plane columns (v6).
       const l1Rows = this.db
         .prepare(`
           SELECT record_id, content, type, priority, scene_name,
                  session_key, session_id, team_id, task_id, user_id, agent_id, version,
-                 timestamp_str, timestamp_start, timestamp_end, metadata_json
+                 timestamp_str, timestamp_start, timestamp_end, metadata_json,
+                 epistemic_status, authority_source, source_message_ids_json
           FROM l1_records
         `)
         .all() as Array<{
@@ -3222,6 +3292,9 @@ export class VectorStore implements IMemoryStore {
           timestamp_start: string;
           timestamp_end: string;
           metadata_json: string;
+          epistemic_status: string;
+          authority_source: string;
+          source_message_ids_json: string;
         }>;
 
       let l1Count = 0;
@@ -3245,6 +3318,9 @@ export class VectorStore implements IMemoryStore {
             r.timestamp_start,
             r.timestamp_end,
             r.metadata_json,
+            r.epistemic_status || "inferred",
+            r.authority_source || "unknown",
+            r.source_message_ids_json || "[]",
           );
           l1Count++;
         } catch (err) {

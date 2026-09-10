@@ -204,13 +204,24 @@ async function runLlmJudgment(
 // ============================
 
 function hitToMemoryRecord(r: L1SearchResult): MemoryRecord {
+  // [authority data-plane] Restore real provenance when the backend carries it;
+  // honest least-authoritative defaults for pre-patch rows.
+  let sourceIds: string[] = [];
+  if (r.source_message_ids_json) {
+    try {
+      const parsed = JSON.parse(r.source_message_ids_json);
+      if (Array.isArray(parsed)) sourceIds = parsed.map(String);
+    } catch { /* malformed json -> empty */ }
+  }
   return {
     id: r.record_id,
     content: r.content,
     type: r.type as MemoryRecord["type"],
     priority: r.priority,
     scene_name: r.scene_name,
-    source_message_ids: [],
+    source_message_ids: sourceIds,
+    epistemic_status: (r.epistemic_status as MemoryRecord["epistemic_status"]) ?? "inferred",
+    authority_source: (r.authority_source as MemoryRecord["authority_source"]) ?? "unknown",
     metadata: r.metadata_json
       ? (() => { try { return JSON.parse(r.metadata_json); } catch { return {}; } })()
       : {},

@@ -676,6 +676,10 @@ async function searchHybrid(
                   priority: r.priority,
                   scene_name: r.scene_name,
                   source_message_ids: [],
+                  // [authority data-plane] FTS rows may predate the fields —
+                  // fall back to the honest defaults ("unknown"/"inferred").
+                  epistemic_status: (r.epistemic_status as MemoryRecord["epistemic_status"]) ?? "inferred",
+                  authority_source: (r.authority_source as MemoryRecord["authority_source"]) ?? "unknown",
                   metadata: r.metadata_json ? (() => { try { return JSON.parse(r.metadata_json); } catch { return {}; } })() : {},
                   timestamps: [r.timestamp_str].filter(Boolean),
                   createdAt: "",

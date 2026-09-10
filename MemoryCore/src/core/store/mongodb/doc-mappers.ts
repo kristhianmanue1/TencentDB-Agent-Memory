@@ -118,6 +118,10 @@ export interface L1Doc {
   updated_time: string;
   updated_time_ms: number;
   metadata_json: string;
+  /** [authority data-plane] Optional: pre-patch docs lack these fields. */
+  epistemic_status?: string;
+  authority_source?: string;
+  source_message_ids_json?: string;
 }
 
 export function l1RecordToDoc(record: MemoryRecord): L1Doc {
@@ -147,6 +151,9 @@ export function l1RecordToDoc(record: MemoryRecord): L1Doc {
     updated_time: record.updatedAt,
     updated_time_ms: isoToEpochMs(record.updatedAt),
     metadata_json: JSON.stringify(record.metadata ?? {}),
+    epistemic_status: record.epistemic_status ?? "inferred",
+    authority_source: record.authority_source ?? "unknown",
+    source_message_ids_json: JSON.stringify(record.source_message_ids ?? []),
   };
 }
 
@@ -170,6 +177,9 @@ export function docToL1RecordRow(doc: L1Doc): L1RecordRow {
     created_time: doc.created_time ?? "",
     updated_time: doc.updated_time ?? "",
     metadata_json: doc.metadata_json ?? "{}",
+    epistemic_status: doc.epistemic_status ?? "inferred",
+    authority_source: doc.authority_source ?? "unknown",
+    source_message_ids_json: doc.source_message_ids_json ?? "[]",
   };
 }
 
@@ -193,6 +203,9 @@ export function docToL1SearchResult(doc: L1Doc, score: number): L1SearchResult {
     user_id: row.user_id,
     agent_id: row.agent_id,
     metadata_json: row.metadata_json,
+    epistemic_status: row.epistemic_status,
+    authority_source: row.authority_source,
+    source_message_ids_json: row.source_message_ids_json,
   };
 }
 

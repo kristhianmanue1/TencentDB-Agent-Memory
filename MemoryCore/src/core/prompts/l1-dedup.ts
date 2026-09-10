@@ -46,6 +46,22 @@ export const CONFLICT_DETECTION_SYSTEM_PROMPT = `你是记忆冲突检测器。�
    - merge / update 时，merged_timestamps 应包含**所有相关记忆的时间戳并集**（去重排序）
    - 这样可以保留事件发生的完整时间线
 
+## [AUTHORITY-PRECEDENCE]
+Precedence of authority_source: user_direct > user_relayed >
+assistant_involved > unknown.
+An "inferred" memory never replaces a "declared" one; an "external" one never
+merges into a user directive so as to inherit its authority. A low-authority
+memory does not replace a higher-authority one merely by being newer.
+Compare: origin, explicitness, date, type, authority_source.
+Consolidating information != consolidating authority.
+
+## [CONTRADICTION-RULE]
+If a new memory contradicts an existing one and the evidence cannot resolve
+the conflict: action="store" with target_ids=[] — never synthesize a
+reconciling third memory. Preserving conflict > fabricating consensus.
+Both records remain; the scene layer records the contradiction in its
+unresolved-conflicts section.
+
 ## 输出格式
 
 严格输出 JSON 数组，每个元素对应一条新记忆的决策。不输出任何其他内容：
@@ -66,7 +82,7 @@ export const CONFLICT_DETECTION_SYSTEM_PROMPT = `你是记忆冲突检测器。�
 - target_ids：要删除替换的旧记忆 ID **数组**（可以 1 条或多条）。store/skip 时省略或为空。
 - merged_content：merge/update 时的最终记忆文本。store/skip 时省略。
 - merged_type：merge/update 后记忆应归属的 type。根据合并后内容本质判断。
-- merged_priority：merge/update 后的新优先级（0-100 整数，merge/update 时必填）。合并后信息更完整、更确定，通常应**酌情提升** priority（例如两条 priority 70 的记忆合并后可提升到 80）。参考标准：80-100（核心特质/重要事件），60-79（一般偏好/普通活动），<60（次要信息）。
+- merged_priority：merge/update 后的新优先级（0-100 整数，merge/update 时必填）。合并 ≠ 提升权威。merge/update 后的 priority 不得超过参与合并记忆中较低原值加 10，除非新批次中包含用户直接声明的新信息。参考标准：80-100（核心特质/重要事件），60-79（一般偏好/普通活动），<60（次要信息）。
 - merged_timestamps：合并后的时间戳数组。收集新记忆 + 所有被合并旧记忆的时间戳，去重排序。`;
 
 export const WORK_CONFLICT_DETECTION_SYSTEM_PROMPT = `你是团队工作记忆冲突检测器。批量比较多条【新记忆】与【统一候选记忆池】中的已有记忆，逐条决定如何处理。
@@ -110,6 +126,22 @@ export const WORK_CONFLICT_DETECTION_SYSTEM_PROMPT = `你是团队工作记忆�
    - merge / update 时，merged_timestamps 应包含**所有相关记忆的时间戳并集**（去重排序）。
    - 这样可以保留工作事实、任务或方法演化的完整时间线。
 
+## [AUTHORITY-PRECEDENCE]
+Precedence of authority_source: user_direct > user_relayed >
+assistant_involved > unknown.
+An "inferred" memory never replaces a "declared" one; an "external" one never
+merges into a user directive so as to inherit its authority. A low-authority
+memory does not replace a higher-authority one merely by being newer.
+Compare: origin, explicitness, date, type, authority_source.
+Consolidating information != consolidating authority.
+
+## [CONTRADICTION-RULE]
+If a new memory contradicts an existing one and the evidence cannot resolve
+the conflict: action="store" with target_ids=[] — never synthesize a
+reconciling third memory. Preserving conflict > fabricating consensus.
+Both records remain; the scene layer records the contradiction in its
+unresolved-conflicts section.
+
 ## 输出格式
 
 严格输出 JSON 数组，每个元素对应一条新记忆的决策。不输出任何其他内容：
@@ -130,7 +162,7 @@ export const WORK_CONFLICT_DETECTION_SYSTEM_PROMPT = `你是团队工作记忆�
 - target_ids：要删除替换的旧记忆 ID **数组**（可以 1 条或多条）。store/skip 时省略或为空。
 - merged_content：merge/update 时的最终记忆文本。store/skip 时省略。
 - merged_type：merge/update 后记忆应归属的 type。根据合并后内容本质判断。
-- merged_priority：merge/update 后的新优先级（0-100 整数，merge/update 时必填）。合并后信息更完整、更确定，通常应**酌情提升** priority。参考标准：80-100（关键事实/重要任务/核心方法/重要资产），60-79（一般工作信息），<60（次要信息）。
+- merged_priority：merge/update 后的新优先级（0-100 整数，merge/update 时必填）。合并 ≠ 提升权威。merge/update 后的 priority 不得超过参与合并记忆中较低原值加 10，除非新批次中包含用户直接声明的新信息。参考标准：80-100（关键事实/重要任务/核心方法/重要资产），60-79（一般工作信息），<60（次要信息）。
 - merged_timestamps：合并后的时间戳数组。收集新记忆 + 所有被合并旧记忆的时间戳，去重排序。`;
 
 export function getConflictDetectionSystemPrompt(mode: MemoryPromptMode = "chat"): string {
@@ -184,6 +216,11 @@ export function formatBatchConflictPrompt(matches: CandidateMatch[]): string {
     priority: c.priority,
     scene_name: c.scene_name,
     timestamps: c.timestamps,
+    // [authority data-plane] shown to the LLM so conflict decisions can weigh
+    // provenance; the values themselves are composed mechanically downstream.
+    epistemic_status: c.epistemic_status ?? "inferred",
+    authority_source: c.authority_source ?? "unknown",
+    source_message_ids: c.source_message_ids ?? [],
   }));
 
   let poolSection: string;

@@ -138,7 +138,17 @@ export class SceneExtractor {
    * @param memories - Array of raw memory records from the API
    * @returns Extraction result with count and success flag
    */
-  async extract(memories: Array<{ content: string; created_at: string; id?: string }>): Promise<ExtractionResult> {
+  async extract(
+    memories: Array<{
+      content: string;
+      created_at: string;
+      id?: string;
+      type?: string;
+      priority?: number;
+      epistemic_status?: string;
+      authority_source?: string;
+    }>,
+  ): Promise<ExtractionResult> {
     const extractStartMs = Date.now();
     this.logger?.info(`${TAG} extract() start: ${memories.length} memories`);
 
@@ -226,6 +236,10 @@ export class SceneExtractor {
         content: m.content,
         created_at: m.created_at,
         id: m.id ?? "",
+        type: m.type,
+        priority: m.priority,
+        epistemic_status: m.epistemic_status ?? "inferred",
+        authority_source: m.authority_source ?? "unknown",
       })),
       null,
       2,

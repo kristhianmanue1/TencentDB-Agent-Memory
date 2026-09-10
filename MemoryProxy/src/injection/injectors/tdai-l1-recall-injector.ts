@@ -7,6 +7,7 @@ import { extractUserQueryText } from "../../tdai/recorder.js";
 import type { CoreSkillConfig } from "../../types.js";
 import { getMetadataClient } from "../../meta/client.js";
 import { resolveFixedAssetCtxs } from "./tdai-fixed-asset.js";
+import { neutralizeClosingTags } from "./tdai-tag-guard.js";
 
 /**
  * L1 召回（"自有 + 借入"跨 agent 合并 top-K）：
@@ -101,7 +102,7 @@ export class TdaiL1RecallInjector implements InjectionHook {
           ? "self"
           : `from ${m.fromAgentName ?? m.fromAgentId}`;
       const score = typeof m.score === "number" ? ` score=${m.score.toFixed(3)}` : "";
-      lines.push(`${i + 1}. [${m.type ?? "memory"}] [${fromTag}${score}] ${m.content}`);
+      lines.push(`${i + 1}. [${m.type ?? "memory"}] [${fromTag}${score}] ${neutralizeClosingTags(m.content ?? "")}`);
     }
     lines.push("</tdai_recalled_l1_memories>");
 

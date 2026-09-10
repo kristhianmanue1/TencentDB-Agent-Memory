@@ -44,6 +44,44 @@ export interface EpisodicMetadata {
 }
 
 /**
+ * Epistemic status — how the content of a memory came to be known.
+ * Declared by the extraction LLM (default "inferred" when omitted).
+ */
+export type EpistemicStatus = "declared" | "inferred" | "external";
+
+/**
+ * Authority source — mechanically derived at extraction time from the roles
+ * of source_message_ids against L0 (see l1-extractor). Not a free-text field.
+ *
+ * Precedence (most → least authoritative):
+ *   user_direct > user_relayed > assistant_involved > unknown
+ *
+ * Merge composition keeps the MOST RESTRICTIVE value: a merged record never
+ * claims more authority than any of its ingredients.
+ * Pre-existing rows written before this field existed carry "unknown".
+ */
+export type AuthoritySource =
+  | "user_direct"
+  | "user_relayed"
+  | "assistant_involved"
+  | "unknown";
+
+/** Compose epistemic statuses on merge/update: most restrictive wins. */
+export function composeEpistemicStatus(values: EpistemicStatus[]): EpistemicStatus {
+  if (values.includes("inferred")) return "inferred";
+  if (values.includes("external")) return "external";
+  return "declared";
+}
+
+/** Compose authority sources on merge/update: most restrictive wins. */
+export function composeAuthoritySource(values: AuthoritySource[]): AuthoritySource {
+  if (values.includes("unknown")) return "unknown";
+  if (values.includes("assistant_involved")) return "assistant_involved";
+  if (values.includes("user_relayed")) return "user_relayed";
+  return "user_direct";
+}
+
+/**
  * A persisted memory record in L1 JSONL files.
  *
  * v3 changes from v2:
@@ -65,6 +103,10 @@ export interface MemoryRecord {
   scene_name: string;
   /** Source message IDs that contributed to this memory */
   source_message_ids: string[];
+  /** Epistemic status: how this content is known (declared / inferred / external). */
+  epistemic_status: EpistemicStatus;
+  /** Mechanically derived authority source. "unknown" = pre-patch row or undeterminable. */
+  authority_source: AuthoritySource;
   /** Type-specific metadata (e.g., activity_start_time for episodic) */
   metadata: EpisodicMetadata | Record<string, never>;
   /** Timestamp trail: all timestamps related to this memory (for merge history tracking) */
@@ -106,6 +148,10 @@ export interface ExtractedMemory {
   type: MemoryType;
   priority: number;
   source_message_ids: string[];
+  /** Declared by the extraction LLM; parser defaults to "inferred" when omitted. */
+  epistemic_status: EpistemicStatus;
+  /** Derived at extraction from source message roles; required for persistence. */
+  authority_source: AuthoritySource;
   metadata: EpisodicMetadata | Record<string, never>;
   /** Scene name this memory was extracted in */
   scene_name: string;
@@ -189,11 +235,31 @@ export async function writeMemory(params: {
   const now = new Date().toISOString();
 
   let nextVersion = 0;
+  let targetSourceIds: string[] = [];
+  let targetStatuses: EpistemicStatus[] = [];
+  let targetAuthorities: AuthoritySource[] = [];
   if ((decision.action === "update" || decision.action === "merge") && decision.target_ids.length > 0 && vectorStore) {
     try {
       const existing = await vectorStore.queryL1Records({ recordIds: decision.target_ids });
       const maxVersion = existing.reduce((max, row) => Math.max(max, row.version ?? 0), 0);
       nextVersion = maxVersion + 1;
+      // [authority data-plane] Collect target provenance so the merged record
+      // unions source_message_ids and never claims more authority than any
+      // of its ingredients (compose* = most restrictive wins).
+      for (const row of existing) {
+        if (row.source_message_ids_json) {
+          try {
+            const parsed = JSON.parse(row.source_message_ids_json);
+            if (Array.isArray(parsed)) targetSourceIds.push(...parsed.map(String));
+          } catch { /* malformed json -> ignore this row's sources */ }
+        }
+        if (row.epistemic_status) {
+          targetStatuses.push(row.epistemic_status as EpistemicStatus);
+        }
+        if (row.authority_source) {
+          targetAuthorities.push(row.authority_source as AuthoritySource);
+        }
+      }
     } catch (err) {
       logger?.warn?.(`${TAG} Failed to read existing memory version, defaulting to v0: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -204,18 +270,27 @@ export async function writeMemory(params: {
   let finalType: MemoryType;
   let finalPriority: number;
   let finalTimestamps: string[];
+  let finalSourceIds: string[];
+  let finalEpistemicStatus: EpistemicStatus;
+  let finalAuthoritySource: AuthoritySource;
 
   if (decision.action === "merge" || decision.action === "update") {
     finalContent = decision.merged_content ?? memory.content;
     finalType = decision.merged_type ?? memory.type;
     finalPriority = decision.merged_priority ?? memory.priority;
     finalTimestamps = decision.merged_timestamps ?? [now];
+    finalSourceIds = Array.from(new Set([...memory.source_message_ids, ...targetSourceIds]));
+    finalEpistemicStatus = composeEpistemicStatus([memory.epistemic_status, ...targetStatuses]);
+    finalAuthoritySource = composeAuthoritySource([memory.authority_source, ...targetAuthorities]);
   } else {
     // store
     finalContent = memory.content;
     finalType = memory.type;
     finalPriority = memory.priority;
     finalTimestamps = [now];
+    finalSourceIds = memory.source_message_ids;
+    finalEpistemicStatus = memory.epistemic_status;
+    finalAuthoritySource = memory.authority_source;
   }
 
   const record: MemoryRecord = {
@@ -224,7 +299,9 @@ export async function writeMemory(params: {
     type: finalType,
     priority: finalPriority,
     scene_name: memory.scene_name,
-    source_message_ids: memory.source_message_ids,
+    source_message_ids: finalSourceIds,
+    epistemic_status: finalEpistemicStatus,
+    authority_source: finalAuthoritySource,
     metadata: memory.metadata,
     timestamps: finalTimestamps,
     createdAt: now,
