@@ -18,6 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./_lib.sh
 source "$SCRIPT_DIR/_lib.sh"
+ventana_guard
 
 # .env 不存在时从模板复制（交互式流程会引导填写 LLM）
 if [[ ! -f "$ENV_FILE" ]]; then

@@ -348,6 +348,7 @@ set_env_value() {
   if [[ -L "$file" ]]; then
     warn "拒绝写入符号链接形式的 env 文件: $file"
     return 1
+
   fi
   dir="$(dirname "$file")"
   base="$(basename "$file")"
@@ -395,8 +396,70 @@ ensure_knowledge_service_key() {
     fi
     KNOWLEDGE_SERVICE_KEY="ks-svc-${rand}"
     set_env_value KNOWLEDGE_SERVICE_KEY "$KNOWLEDGE_SERVICE_KEY" "$ENV_FILE"
-    info "已生成 KNOWLEDGE_SERVICE_KEY 并写回 $ENV_FILE（Panel 与 Knowledge 共用）"
+    info "已生成 KNOWLEDGE_SERVICE_KEY 并写回 ${ENV_FILE}（Panel 与 Knowledge 共用）"
   fi
+}
+
+# ventana_guard — runbook 2026-09-10 F0.0 (v1.2): cerrojo de canal + lock de ventana.
+#   1) Aborta si el shell invocador usa ANTHROPIC_BASE_URL hacia el stack:
+#      una ventana cortaria su propio canal de control (incidente 2026-09-30).
+#   2) Lock .ventana-lock propiedad por lock_id: pid vivo ajeno => abortar;
+#      pid muerto o >4h => tomar posesion. Un sucesor anclado en acta presenta
+#      VENTANA_LOCK_ID=<id> para relevar. Requiere SCRIPT_DIR del llamador.
+ventana_guard() {
+  local base_url="${ANTHROPIC_BASE_URL:-}"
+  if [[ "${base_url}" == *":8096"* || "${base_url}" == *"tdai-proxy"* ]]; then
+    die "F0.0: ANTHROPIC_BASE_URL apunta al stack; una ventana cortaria su propio canal. Opera desde una sesion sin esa variable."
+  fi
+  local lock_file="${SCRIPT_DIR}/.ventana-lock"
+  local now
+  now="$(date +%s)"
+  if [[ -f "${lock_file}" ]]; then
+    local old_id old_pid old_ts mine pid_alive age
+    old_id="$(sed -n 's/^lock_id=//p' "${lock_file}" | head -1)"
+    old_pid="$(sed -n 's/^pid=//p' "${lock_file}" | head -1)"
+    old_ts="$(sed -n 's/^created=//p' "${lock_file}" | head -1)"
+    mine="${VENTANA_LOCK_ID:-}"
+    pid_alive=0
+    # ps -p, no kill -0: EPERM ante proceso ajeno no significa que este muerto.
+    if [[ -n "${old_pid}" ]] && ps -p "${old_pid}" >/dev/null 2>&1; then
+      pid_alive=1
+    fi
+    age=$(( now - ${old_ts:-0} ))
+    if [[ -n "${mine}" && "${mine}" == "${old_id}" ]]; then
+      info "F0.0: relevo legitimo del lock ${old_id} (sucesor anclado en acta)."
+    elif [[ "${pid_alive}" == "1" && "${age}" -lt 14400 ]]; then
+      die "F0.0: ventana activa en otro proceso (lock_id=${old_id}, pid=${old_pid}). Presenta VENTANA_LOCK_ID=${old_id} si eres su sucesor, o coordina con el coach."
+    else
+      warn "F0.0: lock stale (pid_alive=${pid_alive}, edad=${age}s). Tomo posesion con lock_id nuevo."
+    fi
+  fi
+  local ts new_id
+  ts="$(date +%Y-%m-%dT%H:%M:%SZ)"
+  new_id="$(date +%s)-$$"
+  printf 'lock_id=%s\npid=%s\ncreated=%s\nfecha_iso=%s\nalcance=%s\n' \
+    "${new_id}" "$$" "${now}" "${ts}" "${VENTANA_ALCANCE:-ventana upstream}" \
+    > "${lock_file}"
+  info "F0.0: lock de ventana adquirido (${new_id})."
+}
+
+# ventana_release — elimina el lock al cierre de la ventana (F6 del runbook).
+#   Solo el proceso dueno del lock (pid propio) o quien presente su lock_id.
+ventana_release() {
+  local lock_file="${SCRIPT_DIR}/.ventana-lock"
+  [[ -f "${lock_file}" ]] || return 0
+  local old_id old_pid mine
+  old_id="$(sed -n 's/^lock_id=//p' "${lock_file}" | head -1)"
+  old_pid="$(sed -n 's/^pid=//p' "${lock_file}" | head -1)"
+  mine="${VENTANA_LOCK_ID:-${old_id}}"
+  if [[ "${mine}" != "${old_id}" ]]; then
+    die "F0.0: el lock pertenece a ${old_id}; no se libera."
+  fi
+  if [[ -n "${old_pid}" && "${old_pid}" != "$$" ]] && kill -0 "${old_pid}" 2>/dev/null; then
+    die "F0.0: el lock sigue vivo en pid ${old_pid}; no se libera."
+  fi
+  rm -f "${lock_file}"
+  ok "F0.0: lock de ventana liberado."
 }
 
 # interactive_llm_setup
