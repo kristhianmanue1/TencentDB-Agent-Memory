@@ -241,15 +241,28 @@ generate_user_key() {
 
 verify_user_key() {
   local key="$1"
-  local code
-  code=$(/usr/bin/curl -sS -o /dev/null -w "%{http_code}" --max-time 5 \
+  local resp body code
+  # El envelope de auth/verify es SIEMPRE HTTP 200: el veredicto vive en
+  # data.valid del cuerpo (ley verificada 2026-09-30). Medir solo el código
+  # haría pasar una key revocada como válida.
+  resp=$(/usr/bin/curl -sS --max-time 5 -w $'\n%{http_code}' \
     -X POST -H "Content-Type: application/json" \
     -H "x-tdai-service-id: default" \
     ${MEMORY_CORE_GATEWAY_API_KEY:+-H "Authorization: Bearer ${MEMORY_CORE_GATEWAY_API_KEY}"} \
     "http://localhost:${MEMORY_CORE_PORT}/v3/meta/auth/verify" \
-    -d "$(printf '{"user_key":"%s"}' "$key")" 2>/dev/null || echo "000")
-  [[ "$code" == "200" ]]
+    -d "$(printf '{"user_key":"%s"}' "$key")" 2>/dev/null) || return 1
+  body="${resp%$'\n'*}"
+  code="${resp##*$'\n'}"
+  [[ "$code" == "200" ]] && printf '%s' "$body" | /usr/bin/grep -q '"valid"[[:space:]]*:[[:space:]]*true'
 }
+
+# Parche A (D-oral coach 2026-09-30): si .admin-key existe y la key ya
+# verifica (data.valid del cuerpo), omitir la llamada init-admin — su 409
+# registra la key COMPLETA en el log del core. Revertir: git checkout de
+# este archivo (backup: checkpoints + ledger de divergencia).
+if [[ -s "$ADMIN_KEY_FILE" ]] && verify_user_key "$(cat "$ADMIN_KEY_FILE")"; then
+  ok "admin user ya verificado (auth/verify data.valid) — init-admin omitido (parche A: evita exponer la key en el 409)"
+else
 
 info "初始化 admin user（username=${MEMORY_CORE_ADMIN_USERNAME}, key 持久化 → ${ADMIN_KEY_FILE}）..."
 
@@ -293,6 +306,8 @@ case "$init_resp" in
     ;;
 esac
 rm -f /tmp/init-admin.$$
+
+fi  # fin parche A (ramo else: volume fresco o key no verificada → init-admin)
 
 # ── 校验 admin key 可用 ─────────────────────────────────────────
 if [[ -s "$ADMIN_KEY_FILE" ]]; then
